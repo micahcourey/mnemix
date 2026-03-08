@@ -178,9 +178,3 @@ pub use traits::{
     BackendCapabilities, BackendCapability, CheckpointBackend, HistoryBackend, MemoryRepository,
     RecallBackend, StatsBackend, StorageBackend,
 };
-
-/// Returns a short description of the crate role.
-#[must_use]
-pub fn crate_role() -> &'static str {
-    "core-domain"
-}

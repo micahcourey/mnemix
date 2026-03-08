@@ -59,7 +59,7 @@ impl BackendCapabilities {
 /// Base trait for storage backends used by Temporal Plane.
 pub trait StorageBackend {
     /// Backend-specific operational error type.
-    type Error;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     /// Describes the product capabilities exposed by the backend.
     fn capabilities(&self) -> BackendCapabilities;

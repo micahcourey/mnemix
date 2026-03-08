@@ -17,3 +17,4 @@ workspace = true
 
 [dependencies]
 temporal-plane-core = { path = "../temporal-plane-core" }
+thiserror.workspace = true

@@ -62,10 +62,21 @@ impl Checkpoint {
     /// Creates a new checkpoint record.
     #[must_use]
     pub fn new(name: CheckpointName, version: VersionNumber, description: Option<String>) -> Self {
+        Self::new_at(name, version, RecordedAt::now(), description)
+    }
+
+    /// Creates a new checkpoint record with an explicit timestamp.
+    #[must_use]
+    pub fn new_at(
+        name: CheckpointName,
+        version: VersionNumber,
+        created_at: RecordedAt,
+        description: Option<String>,
+    ) -> Self {
         Self {
             name,
             version,
-            created_at: RecordedAt::now(),
+            created_at,
             description,
         }
     }
@@ -184,6 +195,8 @@ impl VersionRecord {
 
 #[cfg(test)]
 mod tests {
+    use std::time::UNIX_EPOCH;
+
     use super::*;
 
     #[test]
@@ -210,5 +223,18 @@ mod tests {
         );
 
         assert_eq!(record.checkpoint(), Some(&summary));
+    }
+
+    #[test]
+    fn checkpoint_can_preserve_explicit_timestamp() {
+        let timestamp = RecordedAt::new(UNIX_EPOCH);
+        let checkpoint = Checkpoint::new_at(
+            CheckpointName::try_from("restore-point").expect("valid checkpoint"),
+            VersionNumber::new(3),
+            timestamp,
+            Some("before restore".to_string()),
+        );
+
+        assert_eq!(checkpoint.created_at(), timestamp);
     }
 }
