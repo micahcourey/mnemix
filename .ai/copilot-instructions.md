@@ -14,12 +14,12 @@
 
 Prefer the generated skills that match this repo:
 
-- unit tests
-- security scan
-- git workflow
+- `unit-test`
+- `security-scan`
+- `git-workflow`
 - planning
-- document generation
-- skill generation
+- `document-generator`
+- `skill-generator`
 
 The compliance agent is intentionally not part of this setup.
 
