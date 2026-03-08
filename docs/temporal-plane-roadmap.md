@@ -11,9 +11,7 @@ This roadmap is derived from:
 
 - [docs/temporal-plane-plan-v3.md](temporal-plane-plan-v3.md)
 - [docs/lancedb-rust-sdk-agent-guide.md](lancedb-rust-sdk-agent-guide.md)
-- [docs/coding-guidlines/rust-api-guidelines/checklist.md](coding-guidlines/rust-api-guidelines/checklist.md)
-- [docs/coding-guidlines/rust-api-guidelines/SUMMARY.md](coding-guidlines/rust-api-guidelines/SUMMARY.md)
-- [docs/coding-guidlines/rust-best-practices/README.md](coding-guidlines/rust-best-practices/README.md)
+- [docs/temporal-plane-coding-guidelines.md](temporal-plane-coding-guidelines.md)
 
 ### Architecture guardrails from the Lance guide
 
@@ -117,7 +115,7 @@ temporal-plane/
 │   ├── versioning-and-restore.md
 │   ├── progressive-disclosure.md
 │   ├── export-import.md
-│   └── coding-guidlines/
+│   └── temporal-plane-coding-guidelines.md
 └── scripts/
     ├── check.sh
     └── release.sh

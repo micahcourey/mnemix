@@ -19,8 +19,7 @@ Before creating or updating implementation tasks, review:
 - `docs/temporal-plane-plan-v3.md`
 - `docs/temporal-plane-roadmap.md`
 - `docs/lancedb-rust-sdk-agent-guide.md`
-- `docs/coding-guidlines/rust-api-guidelines/checklist.md`
-- `docs/coding-guidlines/rust-best-practices/README.md`
+- `docs/temporal-plane-coding-guidelines.md`
 
 ### Expected workflow
 

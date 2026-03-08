@@ -5,6 +5,8 @@
 
 This document freezes the initial repository scaffold for the first implementation phase.
 
+The active agent coding guidance for this repo lives in [temporal-plane-coding-guidelines.md](temporal-plane-coding-guidelines.md).
+
 ## Goals
 
 - establish a Rust-workspace-first repository shape
