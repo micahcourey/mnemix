@@ -20,17 +20,17 @@ pub enum CheckpointProtection {
     ProtectNamedOnly,
 }
 
-/// Describes what should happen before destructive cleanup begins.
+/// Describes what should happen before a potentially destructive operation begins.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum PreOperationCheckpointPolicy {
     /// Create a new automatic checkpoint using the provided prefix.
     AutoCreate {
-        /// Prefix used when generating a pre-cleanup checkpoint name.
+        /// Prefix used when generating an automatic pre-operation checkpoint name.
         prefix: String,
     },
     /// Require the caller to create a checkpoint explicitly.
     RequireCallerProvided,
-    /// Skip pre-cleanup checkpoint creation.
+    /// Skip automatic pre-operation checkpoint creation.
     Skip,
 }
 

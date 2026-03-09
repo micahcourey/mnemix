@@ -455,12 +455,7 @@ impl LanceDbBackend {
             VersionNumber::new(previous_version),
             VersionNumber::new(current_version),
             pre_optimize_checkpoint,
-            compact_stats.compaction.as_ref().is_some_and(|stats| {
-                stats.fragments_removed > 0
-                    || stats.fragments_added > 0
-                    || stats.files_removed > 0
-                    || stats.files_added > 0
-            }),
+            compact_stats.compaction.is_some(),
             pruned_versions,
             bytes_removed,
         ))

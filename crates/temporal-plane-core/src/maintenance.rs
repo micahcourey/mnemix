@@ -97,7 +97,7 @@ impl OptimizeResult {
         self.pre_optimize_checkpoint.as_ref()
     }
 
-    /// Returns whether compaction work ran.
+    /// Returns whether compaction was attempted.
     #[must_use]
     pub const fn compacted(&self) -> bool {
         self.compacted
