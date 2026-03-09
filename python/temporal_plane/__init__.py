@@ -38,6 +38,7 @@ from .models import (
     MemorySummary,
     OptimizeRequest,
     OptimizeResult,
+    OptimizeRetentionResult,
     RecallEntry,
     RecallRequest,
     RecallResult,
@@ -74,6 +75,7 @@ __all__ = [
     "VersionRecord",
     "RestoreResult",
     "OptimizeResult",
+    "OptimizeRetentionResult",
     "StoreStats",
     # value types
     "MemoryKind",

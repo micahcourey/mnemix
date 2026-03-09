@@ -3,14 +3,15 @@
 A thin, typed Python client for [Temporal Plane](../README.md) — a local-first
 memory layer for AI coding agents.
 
-All product logic lives in the Rust `tp` CLI binary.  This package wraps its
-`--json` output surface; no core behavior is duplicated here.
+All product logic lives in the Rust `temporal-plane` CLI binary.  This package
+wraps its `--json` output surface; no core behavior is duplicated here.
 
 ## Requirements
 
 - Python 3.11 or later
-- The `tp` binary on `PATH` (install from the workspace root via `cargo install`)
-  or set `TP_BINARY=/path/to/tp`
+- The `temporal-plane` binary on `PATH` (install from the workspace root via
+  `cargo install --path crates/temporal-plane-cli`) or set
+  `TP_BINARY=/path/to/temporal-plane`
 
 ## Installation (development)
 
@@ -75,7 +76,7 @@ print(f"Total memories: {stats.total_memories}")
 |-----------|-------------|
 | `TemporalPlaneError` | Base class for all errors |
 | `TemporalPlaneCommandError` | CLI returned a non-zero exit or error JSON |
-| `TemporalPlaneBinaryNotFoundError` | `tp` binary not found on PATH |
+| `TemporalPlaneBinaryNotFoundError` | `temporal-plane` binary not found on PATH |
 | `TemporalPlaneDecodeError` | CLI output could not be decoded |
 
 ## Running Tests

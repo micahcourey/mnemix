@@ -313,6 +313,26 @@ class RestoreResult:
 
 
 @dataclass(frozen=True)
+class OptimizeRetentionResult:
+    """Retention settings that were active during an ``optimize`` operation.
+
+    Mirrors ``OptimizeRetentionView`` in the CLI output layer.
+    """
+
+    minimum_age_days: int
+    delete_unverified: bool
+    error_if_tagged_old_versions: bool
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "OptimizeRetentionResult":
+        return cls(
+            minimum_age_days=data["minimum_age_days"],
+            delete_unverified=data["delete_unverified"],
+            error_if_tagged_old_versions=data["error_if_tagged_old_versions"],
+        )
+
+
+@dataclass(frozen=True)
 class OptimizeResult:
     """Result of an ``optimize`` operation."""
 
@@ -322,6 +342,7 @@ class OptimizeResult:
     prune_old_versions: bool
     pruned_versions: int
     bytes_removed: int
+    retention: OptimizeRetentionResult
     pre_optimize_checkpoint: CheckpointResult | None
 
     @classmethod
@@ -334,6 +355,7 @@ class OptimizeResult:
             prune_old_versions=data["prune_old_versions"],
             pruned_versions=data["pruned_versions"],
             bytes_removed=data["bytes_removed"],
+            retention=OptimizeRetentionResult.from_dict(data["retention"]),
             pre_optimize_checkpoint=CheckpointResult.from_dict(pre) if pre else None,
         )
 

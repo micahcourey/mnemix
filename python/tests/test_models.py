@@ -348,6 +348,9 @@ class TestOptimizeResult:
         assert result.compacted is True
         assert result.bytes_removed == 1024
         assert result.pre_optimize_checkpoint is None
+        assert result.retention.minimum_age_days == 30
+        assert result.retention.delete_unverified is False
+        assert result.retention.error_if_tagged_old_versions is True
 
 
 # ---------------------------------------------------------------------------

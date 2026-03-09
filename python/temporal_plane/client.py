@@ -33,7 +33,6 @@ from pathlib import Path
 from typing import Any
 
 from . import _runner
-from .errors import TemporalPlaneDecodeError
 from .models import (
     CheckpointRequest,
     CheckpointResult,
@@ -74,14 +73,6 @@ class TemporalPlane:
 
     def _run(self, subcommand: str, args: list[str]) -> dict[str, Any]:
         return _runner.run(self._store, subcommand, args)
-
-    def _run_list(self, subcommand: str, args: list[str]) -> list[dict[str, Any]]:
-        data = self._run(subcommand, args)
-        if not isinstance(data, dict):
-            raise TemporalPlaneDecodeError(
-                f"Expected a JSON object from '{subcommand}', got {type(data).__name__}"
-            )
-        return data  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # Store lifecycle

@@ -3,9 +3,9 @@
 This module is internal.  Use :class:`temporal_plane.client.TemporalPlane`
 rather than invoking this module directly.
 
-The runner locates the ``tp`` binary, builds the argument list, executes the
-subprocess, and returns a decoded ``dict`` from the CLI JSON output.
-Error envelopes (``{"kind": "error", ...}``) are converted to
+The runner locates the ``temporal-plane`` binary, builds the argument list,
+executes the subprocess, and returns a decoded ``dict`` from the CLI JSON
+output.  Error envelopes (``{"kind": "error", ...}``) are converted to
 :class:`~temporal_plane.errors.TemporalPlaneCommandError` before being
 re-raised to callers.
 """
@@ -28,15 +28,15 @@ from .errors import (
 # The environment variable that overrides the binary path for tests or custom
 # installations.
 _ENV_BINARY = "TP_BINARY"
-_BINARY_NAME = "tp"
+_BINARY_NAME = "temporal-plane"
 
 
 def _find_binary() -> str:
-    """Return the path to the ``tp`` binary.
+    """Return the path to the ``temporal-plane`` binary.
 
     Resolution order:
     1. ``TP_BINARY`` environment variable.
-    2. ``tp`` on ``PATH`` via :func:`shutil.which`.
+    2. ``temporal-plane`` on ``PATH`` via :func:`shutil.which`.
 
     Raises:
         TemporalPlaneBinaryNotFoundError: if the binary cannot be found.
@@ -61,7 +61,7 @@ def run(
     subcommand: str,
     args: list[str],
 ) -> dict[str, Any]:
-    """Run a ``tp`` subcommand and return the decoded JSON output.
+    """Run a ``temporal-plane`` subcommand and return the decoded JSON output.
 
     Args:
         store: Path to the Temporal Plane store directory.
@@ -73,7 +73,7 @@ def run(
         ``"status"`` kind outputs.
 
     Raises:
-        TemporalPlaneBinaryNotFoundError: Binary not on PATH.
+        TemporalPlaneBinaryNotFoundError: ``temporal-plane`` binary not on PATH.
         TemporalPlaneCommandError: CLI returned a non-zero exit code or an
             error-kind JSON envelope.
         TemporalPlaneDecodeError: Output could not be parsed as JSON or the

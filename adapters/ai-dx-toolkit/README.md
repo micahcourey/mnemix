@@ -87,7 +87,3 @@ pytest tests/
 - No LanceDB or lance-specific assumptions are made here.
 - Core semantics (pinning, layered recall, checkpoints) stay aligned with the CLI surface.
 - Defer direct FFI or PyO3 bindings until a dedicated stable Rust application API exists.
-
-This directory is reserved for the first host adapter for Temporal Plane.
-
-Implementation is intentionally deferred until the adapter milestone.
