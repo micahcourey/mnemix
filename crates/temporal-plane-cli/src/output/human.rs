@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::output::{
     CheckpointResultView, CommandOutput, MemoryDetailView, MemoryListView, MemoryResultView,
-    MemorySummaryView, StatsResultView, StatusView, VersionListView,
+    MemorySummaryView, RecallEntryView, RecallResultView, StatsResultView, StatusView,
+    VersionListView,
 };
 
 pub(crate) fn render_human(output: &CommandOutput) -> String {
@@ -11,6 +12,7 @@ pub(crate) fn render_human(output: &CommandOutput) -> String {
         CommandOutput::Status(view) => render_status(&mut rendered, view),
         CommandOutput::Memory(view) => render_memory(&mut rendered, view),
         CommandOutput::MemoryList(view) => render_memory_list(&mut rendered, view),
+        CommandOutput::Recall(view) => render_recall(&mut rendered, view),
         CommandOutput::Checkpoint(view) => render_checkpoint(&mut rendered, view),
         CommandOutput::VersionList(view) => render_version_list(&mut rendered, view),
         CommandOutput::Stats(view) => render_stats(&mut rendered, view),
@@ -66,6 +68,26 @@ fn render_checkpoint(buffer: &mut String, view: &CheckpointResultView) {
     if let Some(description) = &view.checkpoint.description {
         push_line(buffer, &format!("description: {description}"));
     }
+}
+
+fn render_recall(buffer: &mut String, view: &RecallResultView) {
+    push_line(
+        buffer,
+        &format!("{}: {} result(s)", view.command, view.count),
+    );
+    if let Some(scope) = &view.scope {
+        push_line(buffer, &format!("scope: {scope}"));
+    }
+    if let Some(query_text) = &view.query_text {
+        push_line(buffer, &format!("query: {query_text}"));
+    }
+    push_line(
+        buffer,
+        &format!("disclosure_depth: {}", view.disclosure_depth),
+    );
+    render_recall_section(buffer, "pinned_context", &view.pinned_context);
+    render_recall_section(buffer, "summaries", &view.summaries);
+    render_recall_section(buffer, "archival", &view.archival);
 }
 
 fn render_version_list(buffer: &mut String, view: &VersionListView) {
@@ -165,6 +187,19 @@ fn render_memory_detail(buffer: &mut String, memory: &MemoryDetailView) {
     render_list(buffer, "tags", &memory.tags);
     render_list(buffer, "entities", &memory.entities);
     render_metadata(buffer, &memory.metadata);
+}
+
+fn render_recall_section(buffer: &mut String, label: &str, entries: &[RecallEntryView]) {
+    push_line(buffer, &format!("{label}: {}", entries.len()));
+    if entries.is_empty() {
+        return;
+    }
+    for entry in entries {
+        push_line(buffer, "---");
+        push_line(buffer, &format!("layer: {}", entry.layer));
+        push_line(buffer, &format!("reasons: {}", entry.reasons.join(", ")));
+        render_memory_summary(buffer, &entry.memory);
+    }
 }
 
 struct MemoryCommon<'a> {
@@ -267,6 +302,14 @@ mod tests {
         }
     }
 
+    fn demo_recall_entry(layer: &'static str) -> RecallEntryView {
+        RecallEntryView {
+            layer,
+            reasons: vec!["scope_filter", "text_match", "importance_boost"],
+            memory: demo_memory_summary(),
+        }
+    }
+
     #[test]
     fn status_output_snapshot() {
         let output = CommandOutput::Status(Box::new(StatusView {
@@ -345,6 +388,62 @@ pinned: true
 pin_reason: Used in every CLI test
 tags: milestone-3, cli
 entities: TemporalPlane
+");
+    }
+
+    #[test]
+    fn recall_output_snapshot() {
+        let output = CommandOutput::Recall(Box::new(RecallResultView {
+            command: "recall",
+            scope: Some("repo:temporal-plane".to_owned()),
+            query_text: Some("CLI".to_owned()),
+            disclosure_depth: "summary_then_pinned",
+            count: 2,
+            pinned_context: vec![demo_recall_entry("pinned_context")],
+            summaries: vec![demo_recall_entry("summary")],
+            archival: Vec::new(),
+        }));
+
+        assert_snapshot!(render_human(&output), @r"
+recall: 2 result(s)
+scope: repo:temporal-plane
+query: CLI
+disclosure_depth: summary_then_pinned
+pinned_context: 1
+---
+layer: pinned_context
+reasons: scope_filter, text_match, importance_boost
+id: memory:1
+scope_id: repo:temporal-plane
+kind: decision
+title: Freeze the CLI contract
+summary: Keep rendering separate from command execution
+created_at: 1970-01-01T00:16:40Z
+updated_at: 1970-01-01T00:33:20Z
+importance: 90
+confidence: 95
+pinned: true
+pin_reason: Used in every CLI test
+tags: milestone-3, cli
+entities: TemporalPlane
+summaries: 1
+---
+layer: summary
+reasons: scope_filter, text_match, importance_boost
+id: memory:1
+scope_id: repo:temporal-plane
+kind: decision
+title: Freeze the CLI contract
+summary: Keep rendering separate from command execution
+created_at: 1970-01-01T00:16:40Z
+updated_at: 1970-01-01T00:33:20Z
+importance: 90
+confidence: 95
+pinned: true
+pin_reason: Used in every CLI test
+tags: milestone-3, cli
+entities: TemporalPlane
+archival: 0
 ");
     }
 

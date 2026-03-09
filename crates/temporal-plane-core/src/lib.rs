@@ -12,10 +12,10 @@
 //!
 //! use temporal_plane_core::{
 //!     BackendCapabilities, BackendCapability, Checkpoint, CheckpointBackend, CheckpointRequest,
-//!     Confidence, CoreError, DisclosureDepth, HistoryBackend, HistoryQuery,
-//!     Importance, MemoryId, MemoryKind, MemoryRecord, MemoryRepository,
-//!     RecallBackend, RecallQuery, ScopeId, SearchQuery, StatsBackend,
-//!     StatsQuery, StorageBackend, TagName, VersionNumber,
+//!     Confidence, CoreError, DisclosureDepth, HistoryBackend, HistoryQuery, Importance,
+//!     MemoryId, MemoryKind, MemoryRecord, MemoryRepository, RecallBackend, RecallEntry,
+//!     RecallExplanation, RecallLayer, RecallQuery, RecallReason, RecallResult, ScopeId,
+//!     SearchQuery, StatsBackend, StatsQuery, StorageBackend, TagName, VersionNumber,
 //! };
 //!
 //! #[derive(Default)]
@@ -49,18 +49,33 @@
 //! }
 //!
 //! impl RecallBackend for ExampleMemoryStore {
-//!     fn recall(&self, query: &RecallQuery) -> Result<Vec<MemoryRecord>, Self::Error> {
-//!         let mut matches: Vec<_> = self
+//!     fn recall(&self, query: &RecallQuery) -> Result<RecallResult, Self::Error> {
+//!         let mut summaries = self
 //!             .records
 //!             .iter()
 //!             .filter(|record| {
 //!                 query.scope().is_none_or(|scope| record.scope_id() == scope)
 //!                     && query.text().is_none_or(|text| record.fts_text().contains(text))
+//!                     && matches!(record.kind(), MemoryKind::Summary)
 //!             })
 //!             .cloned()
-//!             .collect();
-//!         matches.truncate(query.limit().value().into());
-//!         Ok(matches)
+//!             .map(|memory| {
+//!                 RecallEntry::new(
+//!                     memory,
+//!                     RecallExplanation::new(
+//!                         RecallLayer::Summary,
+//!                         vec![RecallReason::SummaryKind, RecallReason::TextMatch],
+//!                     ),
+//!                 )
+//!             })
+//!             .collect::<Vec<_>>();
+//!         summaries.truncate(query.limit().value().into());
+//!         Ok(RecallResult::new(
+//!             query.disclosure_depth(),
+//!             Vec::new(),
+//!             summaries,
+//!             Vec::new(),
+//!         ))
 //!     }
 //!
 //!     fn search(&self, query: &SearchQuery) -> Result<Vec<MemoryRecord>, Self::Error> {
@@ -117,7 +132,7 @@
 //! let memory = MemoryRecord::builder(
 //!     MemoryId::try_from("memory:core-domain")?,
 //!     scope.clone(),
-//!     MemoryKind::Decision,
+//!     MemoryKind::Summary,
 //! )
 //! .title("Milestone 1 contract")?
 //! .summary("Freeze the storage-agnostic domain contract")?
@@ -144,7 +159,7 @@
 //! )?;
 //!
 //! assert_eq!(stored.title(), "Milestone 1 contract");
-//! assert_eq!(results.len(), 1);
+//! assert_eq!(results.count(), 1);
 //! assert_eq!(checkpoint.version().value(), 1);
 //! # Ok::<(), CoreError>(())
 //! ```
@@ -169,12 +184,13 @@ pub use identifiers::{
 };
 pub use memory::{Confidence, Importance, MemoryKind, MemoryRecord, MemoryRecordBuilder, PinState};
 pub use query::{
-    DisclosureDepth, HistoryQuery, QueryLimit, RecallQuery, SearchQuery, StatsQuery, StatsSnapshot,
+    DisclosureDepth, HistoryQuery, QueryLimit, RecallEntry, RecallExplanation, RecallLayer,
+    RecallQuery, RecallReason, RecallResult, SearchQuery, StatsQuery, StatsSnapshot,
 };
 pub use retention::{
     CheckpointProtection, CleanupMode, PreCleanupCheckpointPolicy, RetentionPolicy,
 };
 pub use traits::{
     BackendCapabilities, BackendCapability, CheckpointBackend, HistoryBackend, MemoryRepository,
-    RecallBackend, StatsBackend, StorageBackend,
+    PinningBackend, RecallBackend, StatsBackend, StorageBackend,
 };

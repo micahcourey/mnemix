@@ -7,8 +7,9 @@ use crate::{
     cli::{Command, RememberArgs},
     errors::CliError,
     output::{
-        CheckpointResultView, CommandOutput, MemoryListView, MemoryResultView, StatsResultView,
-        StatusView, VersionListView, checkpoint_view, memory_detail_view, memory_summary_view,
+        CheckpointResultView, CommandOutput, MemoryListView, MemoryResultView, RecallEntryView,
+        RecallResultView, StatsResultView, StatusView, VersionListView, checkpoint_view,
+        disclosure_depth_name, memory_detail_view, memory_summary_view, recall_entry_view,
         stats_view, version_view,
     },
 };
@@ -19,6 +20,7 @@ mod history;
 mod import;
 mod init;
 mod pins;
+mod recall;
 mod remember;
 mod search;
 mod show;
@@ -29,6 +31,7 @@ pub(crate) fn execute(command: &Command, store_path: &Path) -> Result<CommandOut
     match command {
         Command::Init => init::run(store_path),
         Command::Remember(args) => remember::run(store_path, args),
+        Command::Recall(args) => recall::run(store_path, args),
         Command::Search(args) => search::run(store_path, args),
         Command::Show(args) => show::run(store_path, args),
         Command::Pins(args) => pins::run(store_path, args),
@@ -39,6 +42,35 @@ pub(crate) fn execute(command: &Command, store_path: &Path) -> Result<CommandOut
         Command::Export(args) => export::run(store_path, args),
         Command::Import(args) => import::run(store_path, args),
     }
+}
+
+pub(super) fn recall_result(
+    scope: Option<String>,
+    query_text: Option<String>,
+    result: &temporal_plane_core::RecallResult,
+) -> CommandOutput {
+    CommandOutput::Recall(Box::new(RecallResultView {
+        command: "recall",
+        scope,
+        query_text,
+        disclosure_depth: disclosure_depth_name(result.disclosure_depth()),
+        count: result.count(),
+        pinned_context: result
+            .pinned_context()
+            .iter()
+            .map(recall_entry_view)
+            .collect::<Vec<RecallEntryView>>(),
+        summaries: result
+            .summaries()
+            .iter()
+            .map(recall_entry_view)
+            .collect::<Vec<RecallEntryView>>(),
+        archival: result
+            .archival()
+            .iter()
+            .map(recall_entry_view)
+            .collect::<Vec<RecallEntryView>>(),
+    }))
 }
 
 pub(super) fn open_store(store_path: &Path) -> Result<LanceDbBackend, CliError> {

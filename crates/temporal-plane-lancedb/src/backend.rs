@@ -21,13 +21,16 @@ use lancedb::{
     query::{ExecutableQuery, QueryBase, Select},
 };
 use temporal_plane_core::{
-    CoreError, MemoryId, RecordedAt, ScopeId,
+    CoreError, Importance, MemoryId, RecordedAt, ScopeId,
     checkpoints::{Checkpoint, CheckpointRequest, CheckpointSummary, VersionNumber, VersionRecord},
-    memory::{MemoryKind, MemoryRecord},
-    query::{HistoryQuery, QueryLimit, RecallQuery, SearchQuery, StatsQuery, StatsSnapshot},
+    memory::{MemoryKind, MemoryRecord, PinState},
+    query::{
+        DisclosureDepth, HistoryQuery, QueryLimit, RecallEntry, RecallExplanation, RecallLayer,
+        RecallQuery, RecallReason, RecallResult, SearchQuery, StatsQuery, StatsSnapshot,
+    },
     traits::{
         BackendCapabilities, BackendCapability, CheckpointBackend, HistoryBackend,
-        MemoryRepository, RecallBackend, StatsBackend, StorageBackend,
+        MemoryRepository, PinningBackend, RecallBackend, StatsBackend, StorageBackend,
     },
 };
 use thiserror::Error;
@@ -38,6 +41,11 @@ const CHECKPOINTS_TABLE: &str = "checkpoints";
 const SCHEMA_METADATA_TABLE: &str = "schema_metadata";
 const PAYLOAD_COLUMN: &str = "payload_json";
 const SCHEMA_VERSION: u64 = 1;
+/// Maximum pinned-context entries surfaced for any recall request.
+const PINNED_CONTEXT_HARD_CAP: usize = 3;
+/// Bounded over-fetch window used so product-side recall ranking can bucket
+/// results without materializing every matching row.
+const RECALL_FETCH_MULTIPLIER: usize = 4;
 
 /// Backend-local error type for the `LanceDB` adapter crate.
 #[non_exhaustive]
@@ -557,6 +565,7 @@ impl StorageBackend for LanceDbBackend {
     fn capabilities(&self) -> BackendCapabilities {
         BackendCapabilities::new([
             BackendCapability::Remember,
+            BackendCapability::Pinning,
             BackendCapability::Search,
             BackendCapability::History,
             BackendCapability::Checkpoints,
@@ -628,23 +637,99 @@ impl MemoryRepository for LanceDbBackend {
     }
 }
 
+impl PinningBackend for LanceDbBackend {
+    fn pin(&mut self, id: &MemoryId, reason: &str) -> Result<Option<MemoryRecord>, Self::Error> {
+        let Some(existing) = self.get(id)? else {
+            return Ok(None);
+        };
+
+        let updated = rebuild_memory_record(&existing)?
+            .pin_state(PinState::pinned(reason)?)
+            .updated_at(RecordedAt::now())
+            .build()?;
+        self.update_memory_record(&updated)?;
+        Ok(Some(updated))
+    }
+
+    fn unpin(&mut self, id: &MemoryId) -> Result<Option<MemoryRecord>, Self::Error> {
+        let Some(existing) = self.get(id)? else {
+            return Ok(None);
+        };
+
+        let updated = rebuild_memory_record(&existing)?
+            .pin_state(PinState::NotPinned)
+            .updated_at(RecordedAt::now())
+            .build()?;
+        self.update_memory_record(&updated)?;
+        Ok(Some(updated))
+    }
+}
+
 impl RecallBackend for LanceDbBackend {
-    fn recall(&self, query: &RecallQuery) -> Result<Vec<MemoryRecord>, Self::Error> {
-        // TODO(m3uo4te8-followup): apply `DisclosureDepth` during ranking once
-        // layered recall semantics land in the backend.
+    fn recall(&self, query: &RecallQuery) -> Result<RecallResult, Self::Error> {
+        let limit = usize::from(query.limit().value());
         let payloads = self.query_payloads(
             &self.memories,
             query
                 .scope()
                 .map(|scope| string_filter("scope_id", scope.as_str())),
-            Some(usize::from(query.limit().value())),
+            Some(recall_fetch_limit(limit)),
             query.text().map(ToOwned::to_owned),
         )?;
 
-        payloads
-            .into_iter()
-            .map(|payload| serde_json::from_str::<MemoryRecord>(&payload).map_err(Into::into))
-            .collect()
+        let mut records = decode_memory_records(payloads)?;
+        sort_recall_records(&mut records);
+        let explain_context = RecallExplainContext::from_records(&records);
+
+        let pinned_limit = limit.min(PINNED_CONTEXT_HARD_CAP);
+
+        let mut pinned_context = Vec::new();
+        let mut summaries = Vec::new();
+        let mut archival = Vec::new();
+
+        for record in records {
+            if pinned_context.len() + summaries.len() + archival.len() >= limit {
+                break;
+            }
+
+            if should_include_in_pinned_context(&record, query)
+                && pinned_context.len() < pinned_limit
+            {
+                pinned_context.push(recall_entry(
+                    record,
+                    RecallLayer::PinnedContext,
+                    query,
+                    &explain_context,
+                ));
+                continue;
+            }
+
+            if should_include_in_summaries(&record, query) {
+                summaries.push(recall_entry(
+                    record,
+                    RecallLayer::Summary,
+                    query,
+                    &explain_context,
+                ));
+                continue;
+            }
+
+            if should_include_in_archival(&record, query) {
+                archival.push(recall_entry(
+                    record,
+                    RecallLayer::Archival,
+                    query,
+                    &explain_context,
+                ));
+            }
+        }
+
+        Ok(RecallResult::new(
+            query.disclosure_depth(),
+            pinned_context,
+            summaries,
+            archival,
+        ))
     }
 
     fn search(&self, query: &SearchQuery) -> Result<Vec<MemoryRecord>, Self::Error> {
@@ -782,6 +867,34 @@ impl CheckpointBackend for LanceDbBackend {
     }
 }
 
+impl LanceDbBackend {
+    fn update_memory_record(&mut self, record: &MemoryRecord) -> Result<(), LanceDbError> {
+        let payload_json = serde_json::to_string(record)?;
+        let (updated_secs, updated_nanos) =
+            system_time_to_parts(record.updated_at().value(), "updated_at")?;
+
+        self.block_on(
+            self.memories
+                .update()
+                .only_if(string_filter("id", record.id().as_str()))
+                .column(
+                    "pinned",
+                    if record.pin_state().is_pinned() {
+                        "true"
+                    } else {
+                        "false"
+                    },
+                )
+                .column("updated_at_secs", updated_secs.to_string())
+                .column("updated_at_nanos", updated_nanos.to_string())
+                .column(PAYLOAD_COLUMN, sql_string_literal(&payload_json))
+                .execute(),
+        )?;
+
+        Ok(())
+    }
+}
+
 impl StatsBackend for LanceDbBackend {
     fn stats(&self, query: &StatsQuery) -> Result<StatsSnapshot, Self::Error> {
         let scope_filter = query
@@ -849,7 +962,7 @@ fn schema_metadata_schema() -> Arc<Schema> {
 }
 
 fn string_filter(column: &str, value: &str) -> String {
-    format!("{column} = '{}'", value.replace('\'', "''"))
+    format!("{column} = '{}'", sql_escape(value))
 }
 
 fn decode_memory_records(payloads: Vec<String>) -> Result<Vec<MemoryRecord>, LanceDbError> {
@@ -867,6 +980,156 @@ fn sort_memory_records(records: &mut [MemoryRecord]) {
             .cmp(&left.updated_at().value())
             .then_with(|| left.id().as_str().cmp(right.id().as_str()))
     });
+}
+
+fn sort_recall_records(records: &mut [MemoryRecord]) {
+    records.sort_by(|left, right| {
+        recall_rank_key(right)
+            .cmp(&recall_rank_key(left))
+            .then_with(|| left.id().as_str().cmp(right.id().as_str()))
+    });
+}
+
+fn recall_rank_key(record: &MemoryRecord) -> (u8, u8, u8, SystemTime) {
+    (
+        u8::from(record.pin_state().is_pinned()),
+        u8::from(matches!(record.kind(), MemoryKind::Summary)),
+        record.importance().value(),
+        record.updated_at().value(),
+    )
+}
+
+fn should_include_in_pinned_context(record: &MemoryRecord, query: &RecallQuery) -> bool {
+    query.disclosure_depth() != DisclosureDepth::SummaryOnly && record.pin_state().is_pinned()
+}
+
+fn should_include_in_summaries(record: &MemoryRecord, query: &RecallQuery) -> bool {
+    matches!(record.kind(), MemoryKind::Summary)
+        && (query.disclosure_depth() == DisclosureDepth::SummaryOnly
+            || !record.pin_state().is_pinned())
+}
+
+fn should_include_in_archival(record: &MemoryRecord, query: &RecallQuery) -> bool {
+    query.disclosure_depth() == DisclosureDepth::Full
+        && !record.pin_state().is_pinned()
+        && !matches!(record.kind(), MemoryKind::Summary)
+}
+
+struct RecallExplainContext {
+    newest_updated_at: Option<SystemTime>,
+    importance_floor: u8,
+}
+
+impl RecallExplainContext {
+    fn from_records(records: &[MemoryRecord]) -> Self {
+        Self {
+            newest_updated_at: records
+                .iter()
+                .map(|record| record.updated_at().value())
+                .max(),
+            importance_floor: Importance::default().value(),
+        }
+    }
+
+    fn receives_importance_boost(&self, record: &MemoryRecord) -> bool {
+        record.importance().value() > self.importance_floor
+    }
+
+    fn receives_recency_boost(&self, record: &MemoryRecord) -> bool {
+        self.newest_updated_at
+            .is_some_and(|newest| record.updated_at().value() == newest)
+    }
+}
+
+fn recall_entry(
+    record: MemoryRecord,
+    layer: RecallLayer,
+    query: &RecallQuery,
+    explain_context: &RecallExplainContext,
+) -> RecallEntry {
+    let mut reasons = Vec::new();
+    if record.pin_state().is_pinned() {
+        reasons.push(RecallReason::Pinned);
+    }
+    if query.scope().is_some() {
+        reasons.push(RecallReason::ScopeFilter);
+    }
+    if query.text().is_some() {
+        reasons.push(RecallReason::TextMatch);
+    }
+    if matches!(record.kind(), MemoryKind::Summary) {
+        reasons.push(RecallReason::SummaryKind);
+    }
+    if explain_context.receives_importance_boost(&record) {
+        reasons.push(RecallReason::ImportanceBoost);
+    }
+    if explain_context.receives_recency_boost(&record) {
+        reasons.push(RecallReason::RecencyBoost);
+    }
+    if layer == RecallLayer::Archival {
+        reasons.push(RecallReason::ArchivalExpansion);
+    }
+
+    RecallEntry::new(record, RecallExplanation::new(layer, reasons))
+}
+
+fn rebuild_memory_record(
+    record: &MemoryRecord,
+) -> Result<temporal_plane_core::MemoryRecordBuilder, CoreError> {
+    let builder = MemoryRecord::builder(
+        record.id().clone(),
+        record.scope_id().clone(),
+        record.kind(),
+    )
+    .title(record.title())?
+    .summary(record.summary())?
+    .detail(record.detail())?
+    .fts_text(record.fts_text())?
+    .importance(record.importance())
+    .confidence(record.confidence())
+    .created_at(record.created_at())
+    .updated_at(record.updated_at())
+    .pin_state(record.pin_state().clone())
+    .metadata(record.metadata().clone());
+
+    let builder = record
+        .tags()
+        .iter()
+        .cloned()
+        .fold(builder, temporal_plane_core::MemoryRecordBuilder::add_tag);
+    let builder = record.entities().iter().cloned().fold(
+        builder,
+        temporal_plane_core::MemoryRecordBuilder::add_entity,
+    );
+    let builder = if let Some(value) = record.source_session_id() {
+        builder.source_session_id(value.clone())
+    } else {
+        builder
+    };
+    let builder = if let Some(value) = record.source_tool() {
+        builder.source_tool(value.clone())
+    } else {
+        builder
+    };
+    let builder = if let Some(value) = record.source_ref() {
+        builder.source_ref(value.clone())
+    } else {
+        builder
+    };
+
+    Ok(builder)
+}
+
+fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", sql_escape(value))
+}
+
+fn sql_escape(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+fn recall_fetch_limit(limit: usize) -> usize {
+    limit.saturating_mul(RECALL_FETCH_MULTIPLIER)
 }
 
 fn system_time_to_parts(
@@ -897,34 +1160,71 @@ mod tests {
 
     use tempfile::TempDir;
     use temporal_plane_core::{
-        CheckpointName, Confidence, Importance, QueryLimit, ScopeId, SearchQuery, StatsQuery,
-        TagName,
+        CheckpointName, Confidence, DisclosureDepth, Importance, QueryLimit, RecallQuery, ScopeId,
+        SearchQuery, StatsQuery, TagName,
         traits::{
-            CheckpointBackend, HistoryBackend, MemoryRepository, RecallBackend, StatsBackend,
+            CheckpointBackend, HistoryBackend, MemoryRepository, PinningBackend, RecallBackend,
+            StatsBackend, StorageBackend,
         },
     };
 
     use super::*;
 
+    #[derive(Clone, Copy)]
+    struct MemoryFixture<'a> {
+        id: &'a str,
+        scope: &'a str,
+        kind: MemoryKind,
+        title: &'a str,
+        summary: &'a str,
+        detail: &'a str,
+        importance: u8,
+        pin_reason: Option<&'a str>,
+        updated_at_secs: u64,
+    }
+
     fn build_memory(id: &str, scope: &str, title: &str, detail: &str) -> MemoryRecord {
+        build_memory_with(MemoryFixture {
+            id,
+            scope,
+            kind: MemoryKind::Decision,
+            title,
+            summary: "summary",
+            detail,
+            importance: 90,
+            pin_reason: None,
+            updated_at_secs: 0,
+        })
+    }
+
+    fn build_memory_with(fixture: MemoryFixture<'_>) -> MemoryRecord {
+        let created_at =
+            RecordedAt::new(UNIX_EPOCH + std::time::Duration::from_secs(fixture.updated_at_secs));
+
         MemoryRecord::builder(
-            MemoryId::try_from(id).expect("valid id"),
-            ScopeId::try_from(scope).expect("valid scope"),
-            MemoryKind::Decision,
+            MemoryId::try_from(fixture.id).expect("valid id"),
+            ScopeId::try_from(fixture.scope).expect("valid scope"),
+            fixture.kind,
         )
-        .title(title)
+        .title(fixture.title)
         .expect("valid title")
-        .summary("summary")
+        .summary(fixture.summary)
         .expect("valid summary")
-        .detail(detail)
+        .detail(fixture.detail)
         .expect("valid detail")
-        .importance(Importance::new(90).expect("valid importance"))
+        .importance(Importance::new(fixture.importance).expect("valid importance"))
         .confidence(Confidence::new(95).expect("valid confidence"))
+        .created_at(created_at)
+        .updated_at(created_at)
         .add_tag(TagName::try_from("milestone-2").expect("valid tag"))
         .metadata(BTreeMap::from([(
             "owner".to_string(),
             "backend".to_string(),
         )]))
+        .pin_state(match fixture.pin_reason {
+            Some(reason) => PinState::pinned(reason).expect("valid pin reason"),
+            None => PinState::NotPinned,
+        })
         .build()
         .expect("memory should build")
     }
@@ -943,6 +1243,13 @@ mod tests {
             backend.schema_version().expect("schema version"),
             SCHEMA_VERSION
         );
+    }
+
+    #[test]
+    fn backend_advertises_pinning_capability() {
+        let (_temp_dir, backend) = new_backend();
+
+        assert!(backend.capabilities().supports_pinning());
     }
 
     #[test]
@@ -986,6 +1293,250 @@ mod tests {
                 .expect("lookup should succeed")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn recall_returns_layered_progressive_disclosure_results() {
+        let (_temp_dir, mut backend) = new_backend();
+        let scope = "repo:temporal-plane";
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:pinned",
+                scope,
+                kind: MemoryKind::Decision,
+                title: "Pinned working agreement",
+                summary: "Pinned context summary",
+                detail: "Always load this before planning work.",
+                importance: 95,
+                pin_reason: Some("critical context"),
+                updated_at_secs: 30,
+            }))
+            .expect("pinned memory should store");
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:summary",
+                scope,
+                kind: MemoryKind::Summary,
+                title: "Repository summary",
+                summary: "Compact repo context summary",
+                detail: "Summary-first recall should keep this context visible.",
+                importance: 90,
+                pin_reason: None,
+                updated_at_secs: 20,
+            }))
+            .expect("summary memory should store");
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:archival",
+                scope,
+                kind: MemoryKind::Decision,
+                title: "Historical note",
+                summary: "Older archival memory",
+                detail: "Useful when expanding recall to deeper context.",
+                importance: 70,
+                pin_reason: None,
+                updated_at_secs: 10,
+            }))
+            .expect("archival memory should store");
+
+        let summary_then_pinned = backend
+            .recall(
+                &RecallQuery::builder()
+                    .scope(ScopeId::try_from(scope).expect("valid scope"))
+                    .disclosure_depth(DisclosureDepth::SummaryThenPinned)
+                    .build()
+                    .expect("query should build"),
+            )
+            .expect("recall should succeed");
+
+        assert_eq!(summary_then_pinned.count(), 2);
+        assert_eq!(summary_then_pinned.pinned_context().len(), 1);
+        assert_eq!(summary_then_pinned.summaries().len(), 1);
+        assert!(summary_then_pinned.archival().is_empty());
+        assert_eq!(
+            summary_then_pinned.pinned_context()[0]
+                .memory()
+                .id()
+                .as_str(),
+            "memory:pinned"
+        );
+        assert_eq!(
+            summary_then_pinned.summaries()[0].explanation().layer(),
+            RecallLayer::Summary
+        );
+        assert!(
+            summary_then_pinned.summaries()[0]
+                .explanation()
+                .reasons()
+                .contains(&RecallReason::ScopeFilter)
+        );
+
+        let full = backend
+            .recall(
+                &RecallQuery::builder()
+                    .scope(ScopeId::try_from(scope).expect("valid scope"))
+                    .disclosure_depth(DisclosureDepth::Full)
+                    .build()
+                    .expect("query should build"),
+            )
+            .expect("full recall should succeed");
+
+        assert_eq!(full.archival().len(), 1);
+        assert_eq!(full.archival()[0].memory().id().as_str(), "memory:archival");
+        assert!(
+            full.archival()[0]
+                .explanation()
+                .reasons()
+                .contains(&RecallReason::ArchivalExpansion)
+        );
+    }
+
+    #[test]
+    fn recall_summary_only_keeps_pinned_summaries_visible() {
+        let (_temp_dir, mut backend) = new_backend();
+        let scope = "repo:temporal-plane";
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:summary-pinned",
+                scope,
+                kind: MemoryKind::Summary,
+                title: "Pinned summary",
+                summary: "Pinned summaries should survive summary-only recall.",
+                detail: "Pinned summaries remain visible even when pinned context is suppressed.",
+                importance: 90,
+                pin_reason: Some("always show this summary"),
+                updated_at_secs: 20,
+            }))
+            .expect("pinned summary should store");
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:decision-pinned",
+                scope,
+                kind: MemoryKind::Decision,
+                title: "Pinned decision",
+                summary: "Should not appear in summary-only mode.",
+                detail: "Pinned non-summaries belong to pinned context only.",
+                importance: 95,
+                pin_reason: Some("active working set"),
+                updated_at_secs: 30,
+            }))
+            .expect("pinned decision should store");
+
+        let result = backend
+            .recall(
+                &RecallQuery::builder()
+                    .scope(ScopeId::try_from(scope).expect("valid scope"))
+                    .disclosure_depth(DisclosureDepth::SummaryOnly)
+                    .build()
+                    .expect("query should build"),
+            )
+            .expect("summary-only recall should succeed");
+
+        assert!(result.pinned_context().is_empty());
+        assert_eq!(result.summaries().len(), 1);
+        assert_eq!(result.count(), 1);
+        assert_eq!(
+            result.summaries()[0].memory().id().as_str(),
+            "memory:summary-pinned"
+        );
+        assert!(
+            result.summaries()[0]
+                .explanation()
+                .reasons()
+                .contains(&RecallReason::Pinned)
+        );
+        assert!(
+            result.summaries()[0]
+                .explanation()
+                .reasons()
+                .contains(&RecallReason::SummaryKind)
+        );
+    }
+
+    #[test]
+    fn recall_explanations_only_report_active_ranking_boosts() {
+        let (_temp_dir, mut backend) = new_backend();
+        let scope = "repo:temporal-plane";
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:pinned-recent",
+                scope,
+                kind: MemoryKind::Decision,
+                title: "Newest pinned memory",
+                summary: "High-importance pinned memory.",
+                detail: "Should receive both ranking boosts.",
+                importance: 90,
+                pin_reason: Some("critical context"),
+                updated_at_secs: 30,
+            }))
+            .expect("recent pinned memory should store");
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:summary-stable",
+                scope,
+                kind: MemoryKind::Summary,
+                title: "Stable summary",
+                summary: "Default-importance summary.",
+                detail: "Should not claim extra ranking boosts.",
+                importance: 50,
+                pin_reason: None,
+                updated_at_secs: 10,
+            }))
+            .expect("stable summary should store");
+
+        let result = backend
+            .recall(
+                &RecallQuery::builder()
+                    .scope(ScopeId::try_from(scope).expect("valid scope"))
+                    .disclosure_depth(DisclosureDepth::SummaryThenPinned)
+                    .build()
+                    .expect("query should build"),
+            )
+            .expect("recall should succeed");
+
+        let pinned_reasons = result.pinned_context()[0].explanation().reasons();
+        assert!(pinned_reasons.contains(&RecallReason::ImportanceBoost));
+        assert!(pinned_reasons.contains(&RecallReason::RecencyBoost));
+
+        let summary_reasons = result.summaries()[0].explanation().reasons();
+        assert!(!summary_reasons.contains(&RecallReason::ImportanceBoost));
+        assert!(!summary_reasons.contains(&RecallReason::RecencyBoost));
+    }
+
+    #[test]
+    fn pin_and_unpin_update_persisted_memory_state() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:pin-target",
+                "repo:temporal-plane",
+                "Pin target",
+                "Used to validate explicit pinning semantics.",
+            ))
+            .expect("memory should store");
+
+        let pinned = backend
+            .pin(
+                &MemoryId::try_from("memory:pin-target").expect("valid id"),
+                "keep in active context",
+            )
+            .expect("pin should succeed")
+            .expect("memory should exist");
+        assert!(pinned.pin_state().is_pinned());
+        assert_eq!(pinned.pin_state().reason(), Some("keep in active context"));
+
+        let fetched = backend
+            .get(&MemoryId::try_from("memory:pin-target").expect("valid id"))
+            .expect("lookup should succeed")
+            .expect("memory should exist");
+        assert!(fetched.pin_state().is_pinned());
+
+        let unpinned = backend
+            .unpin(&MemoryId::try_from("memory:pin-target").expect("valid id"))
+            .expect("unpin should succeed")
+            .expect("memory should exist");
+        assert!(!unpinned.pin_state().is_pinned());
+        assert_eq!(unpinned.pin_state().reason(), None);
     }
 
     #[test]

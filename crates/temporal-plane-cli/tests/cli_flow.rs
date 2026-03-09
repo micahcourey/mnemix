@@ -98,6 +98,34 @@ fn init_and_full_inspection_flow_outputs_stable_json() {
     assert_eq!(show["data"]["command"], "show");
     assert_eq!(show["data"]["memory"]["source_tool"], "copilot");
 
+    let recall = run_json_ok(
+        &store,
+        &[
+            "recall",
+            "--text",
+            "contract",
+            "--scope",
+            "repo:temporal-plane",
+        ],
+    );
+    assert_eq!(recall["kind"], "recall");
+    assert_eq!(recall["data"]["count"], 1);
+    assert_eq!(
+        recall["data"]["pinned_context"][0]["memory"]["id"],
+        "memory:cli-1"
+    );
+    assert_eq!(
+        recall["data"]["pinned_context"][0]["layer"],
+        "pinned_context"
+    );
+    assert_eq!(
+        recall["data"]["archival"]
+            .as_array()
+            .expect("archival array")
+            .len(),
+        0
+    );
+
     let search = run_json_ok(
         &store,
         &[
