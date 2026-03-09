@@ -31,7 +31,7 @@ use temporal_plane_core::{
     },
 };
 use thiserror::Error;
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 
 const MEMORIES_TABLE: &str = "memories";
 const CHECKPOINTS_TABLE: &str = "checkpoints";
@@ -77,6 +77,15 @@ pub enum LanceDbError {
         id: String,
     },
 
+    /// Indicates the requested store path is invalid for the selected operation.
+    #[error("invalid store path `{path}`: {details}")]
+    InvalidStorePath {
+        /// Store path.
+        path: PathBuf,
+        /// Human-readable failure details.
+        details: &'static str,
+    },
+
     /// Indicates a checkpoint name already exists.
     #[error("checkpoint `{name}` already exists")]
     DuplicateCheckpointName {
@@ -113,6 +122,10 @@ pub enum LanceDbError {
         /// Unimplemented feature name.
         feature: &'static str,
     },
+
+    /// Indicates a sync wrapper was called from within an async runtime.
+    #[error("sync LanceDB backend APIs cannot be called from an async runtime")]
+    UnsupportedCallerContext,
 }
 
 /// A persistent local backend backed by `LanceDB`.
@@ -187,8 +200,9 @@ impl LanceDbBackend {
         })?;
 
         let Some(batch) = batches.first() else {
-            return Err(LanceDbError::MissingTable {
-                table: SCHEMA_METADATA_TABLE,
+            return Err(LanceDbError::InvalidData {
+                field: "schema_version",
+                details: "missing schema metadata row".to_owned(),
             });
         };
         let Some(column) = batch
@@ -200,6 +214,20 @@ impl LanceDbBackend {
                 details: "expected UInt64 column".to_owned(),
             });
         };
+
+        if column.is_empty() {
+            return Err(LanceDbError::InvalidData {
+                field: "schema_version",
+                details: "missing schema_version value".to_owned(),
+            });
+        }
+
+        if column.is_null(0) {
+            return Err(LanceDbError::InvalidData {
+                field: "schema_version",
+                details: "null schema_version value".to_owned(),
+            });
+        }
 
         Ok(column.value(0))
     }
@@ -238,7 +266,32 @@ impl LanceDbBackend {
     }
 
     fn open_internal(path: &Path, create_missing: bool) -> Result<Self, LanceDbError> {
-        std::fs::create_dir_all(path)?;
+        if Handle::try_current().is_ok() {
+            return Err(LanceDbError::UnsupportedCallerContext);
+        }
+
+        if create_missing {
+            std::fs::create_dir_all(path)?;
+        } else {
+            let metadata = std::fs::metadata(path).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    LanceDbError::InvalidStorePath {
+                        path: path.to_path_buf(),
+                        details: "store path does not exist",
+                    }
+                } else {
+                    LanceDbError::Io(error)
+                }
+            })?;
+
+            if !metadata.is_dir() {
+                return Err(LanceDbError::InvalidStorePath {
+                    path: path.to_path_buf(),
+                    details: "store path is not a directory",
+                });
+            }
+        }
+
         let runtime = Builder::new_multi_thread().enable_all().build()?;
         let uri = path.to_string_lossy().to_string();
         let connection = runtime.block_on(connect(&uri).execute())?;
@@ -315,17 +368,9 @@ impl LanceDbBackend {
             });
         }
 
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::Utf8, false),
-            Field::new("version", DataType::UInt64, false),
-            Field::new("created_at_secs", DataType::UInt64, false),
-            Field::new("created_at_nanos", DataType::UInt32, false),
-            Field::new(PAYLOAD_COLUMN, DataType::Utf8, false),
-        ]));
-
         Ok(runtime.block_on(
             connection
-                .create_empty_table(CHECKPOINTS_TABLE, schema)
+                .create_empty_table(CHECKPOINTS_TABLE, checkpoints_schema())
                 .execute(),
         )?)
     }
@@ -349,15 +394,9 @@ impl LanceDbBackend {
             });
         }
 
-        let schema = Arc::new(Schema::new(vec![Field::new(
-            "schema_version",
-            DataType::UInt64,
-            false,
-        )]));
-
         Ok(runtime.block_on(
             connection
-                .create_empty_table(SCHEMA_METADATA_TABLE, schema)
+                .create_empty_table(SCHEMA_METADATA_TABLE, schema_metadata_schema())
                 .execute(),
         )?)
     }
@@ -384,11 +423,7 @@ impl LanceDbBackend {
             return Ok(());
         }
 
-        let schema = Arc::new(Schema::new(vec![Field::new(
-            "schema_version",
-            DataType::UInt64,
-            false,
-        )]));
+        let schema = schema_metadata_schema();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![Arc::new(UInt64Array::from(vec![SCHEMA_VERSION]))],
@@ -457,6 +492,10 @@ impl LanceDbBackend {
     where
         F: Future<Output = Result<T, lancedb::Error>>,
     {
+        if Handle::try_current().is_ok() {
+            return Err(LanceDbError::UnsupportedCallerContext);
+        }
+
         Ok(self.runtime.block_on(future)?)
     }
 }
@@ -655,13 +694,7 @@ impl CheckpointBackend for LanceDbBackend {
         let (created_secs, created_nanos) =
             system_time_to_parts(created_at.value(), "checkpoint_created_at")?;
         let payload_json = serde_json::to_string(&checkpoint)?;
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("name", DataType::Utf8, false),
-            Field::new("version", DataType::UInt64, false),
-            Field::new("created_at_secs", DataType::UInt64, false),
-            Field::new("created_at_nanos", DataType::UInt32, false),
-            Field::new(PAYLOAD_COLUMN, DataType::Utf8, false),
-        ]));
+        let schema = checkpoints_schema();
         let batch = RecordBatch::try_new(
             schema.clone(),
             vec![
@@ -744,6 +777,24 @@ fn memories_schema() -> Arc<Schema> {
         Field::new("pinned", DataType::Boolean, false),
         Field::new(PAYLOAD_COLUMN, DataType::Utf8, false),
     ]))
+}
+
+fn checkpoints_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::new("name", DataType::Utf8, false),
+        Field::new("version", DataType::UInt64, false),
+        Field::new("created_at_secs", DataType::UInt64, false),
+        Field::new("created_at_nanos", DataType::UInt32, false),
+        Field::new(PAYLOAD_COLUMN, DataType::Utf8, false),
+    ]))
+}
+
+fn schema_metadata_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![Field::new(
+        "schema_version",
+        DataType::UInt64,
+        false,
+    )]))
 }
 
 fn string_filter(column: &str, value: &str) -> String {
@@ -904,6 +955,23 @@ mod tests {
     }
 
     #[test]
+    fn open_missing_store_path_fails_without_creating_directory() {
+        let temp_dir = TempDir::new().expect("tempdir should be created");
+        let missing_path = temp_dir.path().join("missing-store");
+
+        let error = LanceDbBackend::open(&missing_path).expect_err("open should fail");
+
+        assert!(matches!(
+            error,
+            LanceDbError::InvalidStorePath {
+                details: "store path does not exist",
+                ..
+            }
+        ));
+        assert!(!missing_path.exists());
+    }
+
+    #[test]
     fn stats_and_history_reflect_persisted_versions() {
         let (_temp_dir, mut backend) = new_backend();
         backend
@@ -993,5 +1061,15 @@ mod tests {
             error,
             LanceDbError::DuplicateCheckpointVersion { .. }
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_backend_calls_fail_inside_async_runtime() {
+        let temp_dir = TempDir::new().expect("tempdir should be created");
+
+        let error = LanceDbBackend::init(temp_dir.path())
+            .expect_err("sync backend initialization should be rejected");
+
+        assert!(matches!(error, LanceDbError::UnsupportedCallerContext));
     }
 }
