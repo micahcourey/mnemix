@@ -3,8 +3,9 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Checkpoint, CheckpointRequest, HistoryQuery, MemoryId, MemoryRecord, RecallQuery, RecallResult,
-    SearchQuery, StatsQuery, StatsSnapshot, VersionRecord,
+    Checkpoint, CheckpointRequest, HistoryQuery, MemoryId, MemoryRecord, OptimizeRequest,
+    OptimizeResult, RecallQuery, RecallResult, RestoreRequest, RestoreResult, SearchQuery,
+    StatsQuery, StatsSnapshot, VersionRecord,
 };
 
 /// An individually advertised backend capability.
@@ -18,8 +19,12 @@ pub enum BackendCapability {
     Search,
     /// The backend can inspect version history.
     History,
+    /// The backend can restore a prior state as a new head version.
+    Restore,
     /// The backend can create and list checkpoints.
     Checkpoints,
+    /// The backend can run explicit maintenance and cleanup flows.
+    Optimize,
 }
 
 /// Declares which product-level operations a backend supports.
@@ -57,10 +62,22 @@ impl BackendCapabilities {
         self.0.contains(&BackendCapability::History)
     }
 
+    /// Returns `true` when the backend can restore from history.
+    #[must_use]
+    pub fn supports_restore(&self) -> bool {
+        self.0.contains(&BackendCapability::Restore)
+    }
+
     /// Returns `true` when the backend can create and list checkpoints.
     #[must_use]
     pub fn supports_checkpoints(&self) -> bool {
         self.0.contains(&BackendCapability::Checkpoints)
+    }
+
+    /// Returns `true` when the backend can run explicit maintenance flows.
+    #[must_use]
+    pub fn supports_optimize(&self) -> bool {
+        self.0.contains(&BackendCapability::Optimize)
     }
 }
 
@@ -141,6 +158,17 @@ pub trait HistoryBackend: StorageBackend {
     fn history(&self, query: &HistoryQuery) -> Result<Vec<VersionRecord>, Self::Error>;
 }
 
+/// Supports restore flows that create a new current state from history.
+pub trait RestoreBackend: StorageBackend {
+    /// Restores the current head from a historical version or checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`](StorageBackend::Error) when the restore target
+    /// cannot be resolved or the restore operation fails.
+    fn restore(&mut self, request: &RestoreRequest) -> Result<RestoreResult, Self::Error>;
+}
+
 /// Supports creation and inspection of stable checkpoints.
 pub trait CheckpointBackend: StorageBackend {
     /// Creates a named checkpoint.
@@ -158,6 +186,17 @@ pub trait CheckpointBackend: StorageBackend {
     /// Returns [`Self::Error`](StorageBackend::Error) when checkpoint listing
     /// is unsupported or fails.
     fn list_checkpoints(&self) -> Result<Vec<Checkpoint>, Self::Error>;
+}
+
+/// Supports explicit maintenance and cleanup operations.
+pub trait OptimizeBackend: StorageBackend {
+    /// Runs maintenance for the current store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`](StorageBackend::Error) when optimization or
+    /// cleanup fails.
+    fn optimize(&mut self, request: &OptimizeRequest) -> Result<OptimizeResult, Self::Error>;
 }
 
 /// Supports human-readable and machine-readable inspection statistics.

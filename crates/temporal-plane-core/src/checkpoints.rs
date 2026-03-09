@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CheckpointName, RecordedAt};
+use crate::{CheckpointName, RecordedAt, RetentionPolicy};
 
 /// A concrete storage revision number surfaced as a product concept.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
@@ -142,6 +142,103 @@ pub enum CheckpointSelector {
     Version(VersionNumber),
 }
 
+/// A request to restore the current head from a checkpoint or version.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RestoreRequest {
+    target: CheckpointSelector,
+    retention_policy: RetentionPolicy,
+}
+
+impl RestoreRequest {
+    /// Creates a restore request.
+    #[must_use]
+    pub fn new(target: CheckpointSelector) -> Self {
+        Self {
+            target,
+            retention_policy: RetentionPolicy::conservative(),
+        }
+    }
+
+    /// Returns the restore target selector.
+    #[must_use]
+    pub const fn target(&self) -> &CheckpointSelector {
+        &self.target
+    }
+
+    /// Returns the retention policy applied to the restore flow.
+    #[must_use]
+    pub const fn retention_policy(&self) -> &RetentionPolicy {
+        &self.retention_policy
+    }
+
+    /// Overrides the retention policy applied to the restore flow.
+    #[must_use]
+    pub fn with_retention_policy(mut self, retention_policy: RetentionPolicy) -> Self {
+        self.retention_policy = retention_policy;
+        self
+    }
+}
+
+/// A product-level restore result.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RestoreResult {
+    target: CheckpointSelector,
+    previous_version: VersionNumber,
+    restored_version: VersionNumber,
+    current_version: VersionNumber,
+    pre_restore_checkpoint: Option<Checkpoint>,
+}
+
+impl RestoreResult {
+    /// Creates a restore result.
+    #[must_use]
+    pub const fn new(
+        target: CheckpointSelector,
+        previous_version: VersionNumber,
+        restored_version: VersionNumber,
+        current_version: VersionNumber,
+        pre_restore_checkpoint: Option<Checkpoint>,
+    ) -> Self {
+        Self {
+            target,
+            previous_version,
+            restored_version,
+            current_version,
+            pre_restore_checkpoint,
+        }
+    }
+
+    /// Returns the requested restore target.
+    #[must_use]
+    pub const fn target(&self) -> &CheckpointSelector {
+        &self.target
+    }
+
+    /// Returns the version that was current before restore.
+    #[must_use]
+    pub const fn previous_version(&self) -> VersionNumber {
+        self.previous_version
+    }
+
+    /// Returns the historical version that was restored.
+    #[must_use]
+    pub const fn restored_version(&self) -> VersionNumber {
+        self.restored_version
+    }
+
+    /// Returns the new current head version created by restore.
+    #[must_use]
+    pub const fn current_version(&self) -> VersionNumber {
+        self.current_version
+    }
+
+    /// Returns the checkpoint created before restore, if any.
+    #[must_use]
+    pub const fn pre_restore_checkpoint(&self) -> Option<&Checkpoint> {
+        self.pre_restore_checkpoint.as_ref()
+    }
+}
+
 /// A history entry representing a visible version in the product model.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct VersionRecord {
@@ -236,5 +333,44 @@ mod tests {
         );
 
         assert_eq!(checkpoint.created_at(), timestamp);
+    }
+
+    #[test]
+    fn restore_result_tracks_versions_and_auto_checkpoint() {
+        let checkpoint = Checkpoint::new_at(
+            CheckpointName::try_from("pre-restore-v7").expect("valid checkpoint"),
+            VersionNumber::new(7),
+            RecordedAt::new(UNIX_EPOCH),
+            Some("automatic checkpoint before restore".to_string()),
+        );
+        let result = RestoreResult::new(
+            CheckpointSelector::Version(VersionNumber::new(3)),
+            VersionNumber::new(7),
+            VersionNumber::new(3),
+            VersionNumber::new(8),
+            Some(checkpoint.clone()),
+        );
+
+        assert_eq!(result.previous_version(), VersionNumber::new(7));
+        assert_eq!(result.restored_version(), VersionNumber::new(3));
+        assert_eq!(result.current_version(), VersionNumber::new(8));
+        assert_eq!(result.pre_restore_checkpoint(), Some(&checkpoint));
+    }
+
+    #[test]
+    fn restore_request_defaults_to_conservative_retention() {
+        let request = RestoreRequest::new(CheckpointSelector::Version(VersionNumber::new(4)));
+
+        assert_eq!(request.retention_policy(), &RetentionPolicy::conservative());
+    }
+
+    #[test]
+    fn restore_request_can_override_retention_policy() {
+        let policy = RetentionPolicy::conservative()
+            .with_pre_restore_checkpoint(crate::PreOperationCheckpointPolicy::Skip);
+        let request = RestoreRequest::new(CheckpointSelector::Version(VersionNumber::new(4)))
+            .with_retention_policy(policy.clone());
+
+        assert_eq!(request.retention_policy(), &policy);
     }
 }

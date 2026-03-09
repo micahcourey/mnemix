@@ -78,6 +78,27 @@ fn create_checkpoint(store: &Path) -> Value {
     )
 }
 
+fn remember_restore_candidate(store: &Path) -> Value {
+    run_json_ok(
+        store,
+        &[
+            "remember",
+            "--id",
+            "memory:cli-2",
+            "--scope",
+            "repo:temporal-plane",
+            "--kind",
+            "decision",
+            "--title",
+            "Temporary restore candidate",
+            "--summary",
+            "Should disappear after restore",
+            "--detail",
+            "This memory only exists to validate restore semantics.",
+        ],
+    )
+}
+
 #[test]
 fn init_and_full_inspection_flow_outputs_stable_json() {
     let temp_dir = tempdir().expect("temp dir should be created");
@@ -257,4 +278,69 @@ fn history_scope_surfaces_cli_json_error() {
     assert_eq!(error["kind"], "error");
     assert_eq!(error["code"], "scoped_history_not_supported");
     assert_eq!(error["message"], "scoped history is not implemented yet");
+}
+
+#[test]
+fn restore_and_optimize_commands_expose_stable_json() {
+    let temp_dir = tempdir().expect("temp dir should be created");
+    let store = temp_dir.path().join("store");
+
+    let _ = init_store(&store);
+    let _ = remember_demo_memory(&store);
+    let checkpoint = create_checkpoint(&store);
+    let _ = remember_restore_candidate(&store);
+
+    let restore = run_json_ok(&store, &["restore", "--checkpoint", "milestone-3"]);
+    assert_eq!(restore["kind"], "restore");
+    assert_eq!(restore["data"]["target"]["kind"], "checkpoint");
+    assert_eq!(restore["data"]["target"]["name"], "milestone-3");
+    assert_eq!(
+        restore["data"]["restored_version"],
+        checkpoint["data"]["checkpoint"]["version"]
+    );
+    assert!(
+        restore["data"]["current_version"]
+            .as_u64()
+            .expect("current version")
+            > restore["data"]["previous_version"]
+                .as_u64()
+                .expect("previous version")
+    );
+    assert!(
+        restore["data"]["pre_restore_checkpoint"]["name"]
+            .as_str()
+            .expect("checkpoint name")
+            .starts_with("pre-restore-v")
+    );
+
+    let missing_assert = cli()
+        .args([
+            "--store",
+            &store.display().to_string(),
+            "--json",
+            "show",
+            "--id",
+            "memory:cli-2",
+        ])
+        .assert()
+        .failure();
+    let missing_error: Value = serde_json::from_slice(&missing_assert.get_output().stderr)
+        .expect("stderr should be valid json");
+    assert_eq!(missing_error["code"], "memory_not_found");
+
+    let optimize = run_json_ok(&store, &["optimize"]);
+    assert_eq!(optimize["kind"], "optimize");
+    assert!(optimize["data"]["compacted"].is_boolean());
+    assert_eq!(optimize["data"]["prune_old_versions"], false);
+    assert_eq!(optimize["data"]["retention"]["minimum_age_days"], 30);
+    assert_eq!(
+        optimize["data"]["retention"]["error_if_tagged_old_versions"],
+        true
+    );
+    assert!(
+        optimize["data"]["pre_optimize_checkpoint"]["name"]
+            .as_str()
+            .expect("checkpoint name")
+            .starts_with("pre-optimize-v")
+    );
 }
