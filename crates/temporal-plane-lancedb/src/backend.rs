@@ -21,10 +21,10 @@ use lancedb::{
     query::{ExecutableQuery, QueryBase, Select},
 };
 use temporal_plane_core::{
-    CoreError, MemoryId, RecordedAt,
+    CoreError, MemoryId, RecordedAt, ScopeId,
     checkpoints::{Checkpoint, CheckpointRequest, CheckpointSummary, VersionNumber, VersionRecord},
     memory::{MemoryKind, MemoryRecord},
-    query::{HistoryQuery, RecallQuery, SearchQuery, StatsQuery, StatsSnapshot},
+    query::{HistoryQuery, QueryLimit, RecallQuery, SearchQuery, StatsQuery, StatsSnapshot},
     traits::{
         BackendCapabilities, BackendCapability, CheckpointBackend, HistoryBackend,
         MemoryRepository, RecallBackend, StatsBackend, StorageBackend,
@@ -245,6 +245,59 @@ impl LanceDbBackend {
 
         self.block_on(self.memories.delete(&filter))?;
         Ok(true)
+    }
+
+    /// Lists stored memories without requiring a text search.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LanceDbError`] when the backing table cannot be queried.
+    pub fn list_memories(
+        &self,
+        scope: Option<&ScopeId>,
+        limit: QueryLimit,
+    ) -> Result<Vec<MemoryRecord>, LanceDbError> {
+        let payloads = self.query_payloads(
+            &self.memories,
+            scope.map(|value| string_filter("scope_id", value.as_str())),
+            Some(usize::from(limit.value())),
+            None,
+        )?;
+
+        payloads
+            .into_iter()
+            .map(|payload| serde_json::from_str::<MemoryRecord>(&payload).map_err(Into::into))
+            .collect()
+    }
+
+    /// Lists pinned memories.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LanceDbError`] when the backing table cannot be queried.
+    pub fn list_pinned_memories(
+        &self,
+        scope: Option<&ScopeId>,
+        limit: QueryLimit,
+    ) -> Result<Vec<MemoryRecord>, LanceDbError> {
+        let filter = match scope {
+            Some(value) => Some(format!(
+                "{} AND pinned = true",
+                string_filter("scope_id", value.as_str())
+            )),
+            None => Some("pinned = true".to_owned()),
+        };
+        let payloads = self.query_payloads(
+            &self.memories,
+            filter,
+            Some(usize::from(limit.value())),
+            None,
+        )?;
+
+        payloads
+            .into_iter()
+            .map(|payload| serde_json::from_str::<MemoryRecord>(&payload).map_err(Into::into))
+            .collect()
     }
 
     /// Placeholder export skeleton for Milestone 2.
