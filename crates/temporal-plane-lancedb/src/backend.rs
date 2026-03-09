@@ -19,18 +19,25 @@ use lancedb::{
     connection::Connection,
     index::{Index, IndexType, scalar::FtsIndexBuilder},
     query::{ExecutableQuery, QueryBase, Select},
+    table::{CompactionOptions, OptimizeAction, OptimizeOptions},
 };
 use temporal_plane_core::{
-    CoreError, Importance, MemoryId, RecordedAt, ScopeId,
-    checkpoints::{Checkpoint, CheckpointRequest, CheckpointSummary, VersionNumber, VersionRecord},
+    CheckpointName, CoreError, Importance, MemoryId, OptimizeRequest, OptimizeResult, RecordedAt,
+    RestoreRequest, RestoreResult, ScopeId,
+    checkpoints::{
+        Checkpoint, CheckpointRequest, CheckpointSelector, CheckpointSummary, VersionNumber,
+        VersionRecord,
+    },
     memory::{MemoryKind, MemoryRecord, PinState},
     query::{
         DisclosureDepth, HistoryQuery, QueryLimit, RecallEntry, RecallExplanation, RecallLayer,
         RecallQuery, RecallReason, RecallResult, SearchQuery, StatsQuery, StatsSnapshot,
     },
+    retention::{CleanupMode, PreOperationCheckpointPolicy},
     traits::{
         BackendCapabilities, BackendCapability, CheckpointBackend, HistoryBackend,
-        MemoryRepository, PinningBackend, RecallBackend, StatsBackend, StorageBackend,
+        MemoryRepository, OptimizeBackend, PinningBackend, RecallBackend, RestoreBackend,
+        StatsBackend, StorageBackend,
     },
 };
 use thiserror::Error;
@@ -108,6 +115,20 @@ pub enum LanceDbError {
         version: u64,
     },
 
+    /// Indicates a checkpoint could not be resolved by name.
+    #[error("checkpoint `{name}` was not found")]
+    CheckpointNotFound {
+        /// Missing checkpoint name.
+        name: String,
+    },
+
+    /// Indicates a version could not be resolved from history.
+    #[error("version `{version}` was not found")]
+    VersionNotFound {
+        /// Missing version number.
+        version: u64,
+    },
+
     /// Indicates stored data could not be decoded.
     #[error("invalid persisted data for `{field}`: {details}")]
     InvalidData {
@@ -130,6 +151,17 @@ pub enum LanceDbError {
         /// Unimplemented feature name.
         feature: &'static str,
     },
+
+    /// Indicates the current policy requires a caller-provided checkpoint.
+    #[error("{operation} requires a caller-provided checkpoint before continuing")]
+    CallerCheckpointRequired {
+        /// The operation that requires a checkpoint.
+        operation: &'static str,
+    },
+
+    /// Indicates pruning was requested while cleanup remains disabled.
+    #[error("retention policy does not allow pruning old versions")]
+    CleanupNotAllowed,
 
     /// Indicates a sync wrapper was called from within an async runtime.
     #[error("sync LanceDB backend APIs cannot be called from an async runtime")]
@@ -322,6 +354,111 @@ impl LanceDbBackend {
     /// Always returns [`LanceDbError::NotImplemented`].
     pub fn import_store(&mut self, _source: impl AsRef<Path>) -> Result<(), LanceDbError> {
         Err(LanceDbError::NotImplemented { feature: "import" })
+    }
+
+    /// Restores the memories table from a historical version or checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LanceDbError`] when the restore target cannot be resolved or
+    /// the underlying restore operation fails.
+    pub(crate) fn restore_store(
+        &mut self,
+        request: &RestoreRequest,
+    ) -> Result<RestoreResult, LanceDbError> {
+        let previous_version = self.block_on(self.memories.version())?;
+        let restored_version = self.resolve_version_selector(request.target())?;
+        let pre_restore_checkpoint = self.maybe_create_operation_checkpoint(
+            request.retention_policy().pre_restore_checkpoint(),
+            "restore",
+            Some(format!(
+                "automatic checkpoint before restore to {}",
+                checkpoint_selector_label(request.target())
+            )),
+        )?;
+
+        match request.target() {
+            CheckpointSelector::Named(name) => {
+                self.block_on(self.memories.checkout_tag(name.as_str()))?;
+            }
+            CheckpointSelector::Version(version) => {
+                self.block_on(self.memories.checkout(version.value()))?;
+            }
+        }
+
+        self.block_on(self.memories.restore())?;
+        self.refresh_memories_table()?;
+
+        let current_version = self.block_on(self.memories.version())?;
+        Ok(RestoreResult::new(
+            request.target().clone(),
+            VersionNumber::new(previous_version),
+            VersionNumber::new(restored_version),
+            VersionNumber::new(current_version),
+            pre_restore_checkpoint,
+        ))
+    }
+
+    /// Runs explicit store maintenance with conservative defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LanceDbError`] when optimization or requested pruning fails.
+    pub(crate) fn optimize_store(
+        &mut self,
+        request: &OptimizeRequest,
+    ) -> Result<OptimizeResult, LanceDbError> {
+        let previous_version = self.block_on(self.memories.version())?;
+        let pre_optimize_checkpoint = self.maybe_create_operation_checkpoint(
+            request.retention_policy().pre_optimize_checkpoint(),
+            "optimize",
+            Some("automatic checkpoint before optimize".to_string()),
+        )?;
+
+        let compact_stats = self.block_on(self.memories.optimize(OptimizeAction::Compact {
+            options: CompactionOptions::default(),
+            remap_options: None,
+        }))?;
+        match self.runtime.block_on(
+            self.memories
+                .optimize(OptimizeAction::Index(OptimizeOptions::default())),
+        ) {
+            Ok(_)
+            | Err(lancedb::Error::NotSupported { .. } | lancedb::Error::IndexNotFound { .. }) => {}
+            Err(error) => return Err(error.into()),
+        }
+
+        let prune_stats = if request.prune_old_versions() {
+            if request.retention_policy().cleanup_mode() != CleanupMode::AllowPrune {
+                return Err(LanceDbError::CleanupNotAllowed);
+            }
+
+            Some(self.block_on(self.memories.optimize(OptimizeAction::Prune {
+                older_than: Some(lancedb::table::Duration::days(i64::from(
+                    request.retention_policy().minimum_age_days(),
+                ))),
+                delete_unverified: Some(request.retention_policy().delete_unverified()),
+                error_if_tagged_old_versions: Some(
+                    request.retention_policy().error_if_tagged_old_versions(),
+                ),
+            }))?)
+        } else {
+            None
+        };
+
+        let current_version = self.block_on(self.memories.version())?;
+        let (pruned_versions, bytes_removed) = prune_stats
+            .and_then(|stats| stats.prune)
+            .map_or((0, 0), |stats| (stats.old_versions, stats.bytes_removed));
+
+        Ok(OptimizeResult::new(
+            VersionNumber::new(previous_version),
+            VersionNumber::new(current_version),
+            pre_optimize_checkpoint,
+            compact_stats.compaction.is_some(),
+            pruned_versions,
+            bytes_removed,
+        ))
     }
 
     fn open_internal(path: &Path, create_missing: bool) -> Result<Self, LanceDbError> {
@@ -568,7 +705,9 @@ impl StorageBackend for LanceDbBackend {
             BackendCapability::Pinning,
             BackendCapability::Search,
             BackendCapability::History,
+            BackendCapability::Restore,
             BackendCapability::Checkpoints,
+            BackendCapability::Optimize,
         ])
     }
 }
@@ -805,62 +944,20 @@ impl HistoryBackend for LanceDbBackend {
     }
 }
 
+impl RestoreBackend for LanceDbBackend {
+    fn restore(&mut self, request: &RestoreRequest) -> Result<RestoreResult, Self::Error> {
+        self.restore_store(request)
+    }
+}
+
 impl CheckpointBackend for LanceDbBackend {
     fn checkpoint(&mut self, request: &CheckpointRequest) -> Result<Checkpoint, Self::Error> {
-        let existing_checkpoints = self.list_checkpoints()?;
-        if existing_checkpoints
-            .iter()
-            .any(|checkpoint| checkpoint.name() == request.name())
-        {
-            return Err(LanceDbError::DuplicateCheckpointName {
-                name: request.name().as_str().to_owned(),
-            });
-        }
-
         let version = self.block_on(self.memories.version())?;
-        if existing_checkpoints
-            .iter()
-            .any(|checkpoint| checkpoint.version().value() == version)
-        {
-            return Err(LanceDbError::DuplicateCheckpointVersion { version });
-        }
-
-        let created_at = RecordedAt::now();
-        let checkpoint = Checkpoint::new_at(
-            request.name().clone(),
-            VersionNumber::new(version),
-            created_at,
+        self.create_checkpoint_at_version(
+            request.name(),
+            version,
             request.description().map(ToOwned::to_owned),
-        );
-
-        let (created_secs, created_nanos) =
-            system_time_to_parts(created_at.value(), "checkpoint_created_at")?;
-        let payload_json = serde_json::to_string(&checkpoint)?;
-        let schema = checkpoints_schema();
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(StringArray::from(vec![Some(request.name().as_str())])),
-                Arc::new(UInt64Array::from(vec![version])),
-                Arc::new(UInt64Array::from(vec![created_secs])),
-                Arc::new(UInt32Array::from(vec![created_nanos])),
-                Arc::new(StringArray::from(vec![Some(payload_json.as_str())])),
-            ],
-        )?;
-        let reader = Box::new(RecordBatchIterator::new(
-            vec![Ok(batch)].into_iter(),
-            schema,
-        ));
-
-        let mut tags = self.block_on(self.memories.tags())?;
-        self.block_on(tags.create(request.name().as_str(), version))?;
-
-        if let Err(error) = self.block_on(self.checkpoints.add(reader).execute()) {
-            let _ = self.block_on(tags.delete(request.name().as_str()));
-            return Err(error);
-        }
-
-        Ok(checkpoint)
+        )
     }
 
     fn list_checkpoints(&self) -> Result<Vec<Checkpoint>, Self::Error> {
@@ -873,7 +970,144 @@ impl CheckpointBackend for LanceDbBackend {
     }
 }
 
+impl OptimizeBackend for LanceDbBackend {
+    fn optimize(&mut self, request: &OptimizeRequest) -> Result<OptimizeResult, Self::Error> {
+        self.optimize_store(request)
+    }
+}
+
 impl LanceDbBackend {
+    fn resolve_version_selector(&self, selector: &CheckpointSelector) -> Result<u64, LanceDbError> {
+        match selector {
+            CheckpointSelector::Named(name) => self
+                .list_checkpoints()?
+                .into_iter()
+                .find(|checkpoint| checkpoint.name() == name)
+                .map(|checkpoint| checkpoint.version().value())
+                .ok_or_else(|| LanceDbError::CheckpointNotFound {
+                    name: name.as_str().to_owned(),
+                }),
+            CheckpointSelector::Version(version) => self.resolve_raw_version(*version),
+        }
+    }
+
+    fn resolve_raw_version(&self, version: VersionNumber) -> Result<u64, LanceDbError> {
+        let requested = version.value();
+        let table = self.open_latest_memories_table()?;
+
+        match self.runtime.block_on(table.checkout(requested)) {
+            Ok(()) => Ok(requested),
+            Err(error) if lancedb_error_indicates_missing_version(&error) => {
+                Err(LanceDbError::VersionNotFound { version: requested })
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn open_latest_memories_table(&self) -> Result<Table, LanceDbError> {
+        let uri = self.path.to_string_lossy().to_string();
+        let connection = self.block_on(connect(&uri).execute())?;
+        self.block_on(connection.open_table(MEMORIES_TABLE).execute())
+    }
+
+    fn refresh_memories_table(&mut self) -> Result<(), LanceDbError> {
+        self.memories = self.open_latest_memories_table()?;
+        Ok(())
+    }
+
+    fn maybe_create_operation_checkpoint(
+        &mut self,
+        policy: &PreOperationCheckpointPolicy,
+        operation: &'static str,
+        description: Option<String>,
+    ) -> Result<Option<Checkpoint>, LanceDbError> {
+        match policy {
+            PreOperationCheckpointPolicy::Skip => Ok(None),
+            PreOperationCheckpointPolicy::RequireCallerProvided => {
+                Err(LanceDbError::CallerCheckpointRequired { operation })
+            }
+            PreOperationCheckpointPolicy::AutoCreate { prefix } => {
+                let current_version = self.block_on(self.memories.version())?;
+                if let Some(existing) = self.checkpoint_for_version(current_version)? {
+                    return Ok(Some(existing));
+                }
+
+                let name = CheckpointName::new(format!("{prefix}-v{current_version}"))?;
+                let checkpoint =
+                    self.create_checkpoint_at_version(&name, current_version, description)?;
+                Ok(Some(checkpoint))
+            }
+        }
+    }
+
+    fn checkpoint_for_version(&self, version: u64) -> Result<Option<Checkpoint>, LanceDbError> {
+        Ok(self
+            .list_checkpoints()?
+            .into_iter()
+            .find(|checkpoint| checkpoint.version().value() == version))
+    }
+
+    fn create_checkpoint_at_version(
+        &mut self,
+        name: &CheckpointName,
+        version: u64,
+        description: Option<String>,
+    ) -> Result<Checkpoint, LanceDbError> {
+        let existing_checkpoints = self.list_checkpoints()?;
+        if existing_checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.name() == name)
+        {
+            return Err(LanceDbError::DuplicateCheckpointName {
+                name: name.as_str().to_owned(),
+            });
+        }
+
+        if existing_checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.version().value() == version)
+        {
+            return Err(LanceDbError::DuplicateCheckpointVersion { version });
+        }
+
+        let created_at = RecordedAt::now();
+        let checkpoint = Checkpoint::new_at(
+            name.clone(),
+            VersionNumber::new(version),
+            created_at,
+            description,
+        );
+
+        let (created_secs, created_nanos) =
+            system_time_to_parts(created_at.value(), "checkpoint_created_at")?;
+        let payload_json = serde_json::to_string(&checkpoint)?;
+        let schema = checkpoints_schema();
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(StringArray::from(vec![Some(name.as_str())])),
+                Arc::new(UInt64Array::from(vec![version])),
+                Arc::new(UInt64Array::from(vec![created_secs])),
+                Arc::new(UInt32Array::from(vec![created_nanos])),
+                Arc::new(StringArray::from(vec![Some(payload_json.as_str())])),
+            ],
+        )?;
+        let reader = Box::new(RecordBatchIterator::new(
+            vec![Ok(batch)].into_iter(),
+            schema,
+        ));
+
+        let mut tags = self.block_on(self.memories.tags())?;
+        self.block_on(tags.create(name.as_str(), version))?;
+
+        if let Err(error) = self.block_on(self.checkpoints.add(reader).execute()) {
+            let _ = self.block_on(tags.delete(name.as_str()));
+            return Err(error);
+        }
+
+        Ok(checkpoint)
+    }
+
     fn recall_layer_entries(
         &self,
         query: &RecallQuery,
@@ -1155,6 +1389,35 @@ fn sql_escape(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+fn lancedb_error_indicates_missing_version(error: &lancedb::Error) -> bool {
+    match error {
+        lancedb::Error::InvalidInput { message }
+        | lancedb::Error::NotSupported { message }
+        | lancedb::Error::Other { message, .. } => {
+            let message = message.to_lowercase();
+            message.contains("version")
+                && (message.contains("not found")
+                    || message.contains("does not exist")
+                    || message.contains("no version"))
+        }
+        lancedb::Error::Lance { source } => {
+            let message = source.to_string().to_lowercase();
+            message.contains("version")
+                && (message.contains("not found")
+                    || message.contains("does not exist")
+                    || message.contains("no version"))
+        }
+        _ => false,
+    }
+}
+
+fn checkpoint_selector_label(selector: &CheckpointSelector) -> String {
+    match selector {
+        CheckpointSelector::Named(name) => format!("checkpoint {}", name.as_str()),
+        CheckpointSelector::Version(version) => format!("version {}", version.value()),
+    }
+}
+
 fn recall_fetch_limit(limit: usize) -> usize {
     limit.saturating_mul(RECALL_FETCH_MULTIPLIER)
 }
@@ -1187,11 +1450,12 @@ mod tests {
 
     use tempfile::TempDir;
     use temporal_plane_core::{
-        CheckpointName, Confidence, DisclosureDepth, Importance, QueryLimit, RecallQuery, ScopeId,
-        SearchQuery, StatsQuery, TagName,
+        CheckpointName, CheckpointSelector, CleanupMode, Confidence, DisclosureDepth, Importance,
+        OptimizeRequest, PreOperationCheckpointPolicy, QueryLimit, RecallQuery, RestoreRequest,
+        RetentionPolicy, ScopeId, SearchQuery, StatsQuery, TagName,
         traits::{
-            CheckpointBackend, HistoryBackend, MemoryRepository, PinningBackend, RecallBackend,
-            StatsBackend, StorageBackend,
+            CheckpointBackend, HistoryBackend, MemoryRepository, OptimizeBackend, PinningBackend,
+            RecallBackend, RestoreBackend, StatsBackend, StorageBackend,
         },
     };
 
@@ -1725,6 +1989,255 @@ mod tests {
             error,
             LanceDbError::DuplicateCheckpointVersion { .. }
         ));
+    }
+
+    #[test]
+    fn restore_recreates_a_new_head_from_a_checkpoint() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:restore-baseline",
+                "repo:temporal-plane",
+                "Restore baseline",
+                "This state should be restored later.",
+            ))
+            .expect("baseline memory should store");
+        let checkpoint = backend
+            .checkpoint(&CheckpointRequest::new(
+                CheckpointName::try_from("restore-baseline").expect("valid checkpoint name"),
+                Some("checkpoint before experimental change".to_string()),
+            ))
+            .expect("checkpoint should be created");
+        backend
+            .remember(build_memory(
+                "memory:temporary",
+                "repo:temporal-plane",
+                "Temporary state",
+                "This memory should disappear after restore.",
+            ))
+            .expect("temporary memory should store");
+
+        let result = backend
+            .restore(&RestoreRequest::new(CheckpointSelector::Named(
+                CheckpointName::try_from("restore-baseline").expect("valid checkpoint name"),
+            )))
+            .expect("restore should succeed");
+
+        assert_eq!(result.restored_version(), checkpoint.version());
+        assert!(result.current_version().value() > result.previous_version().value());
+        assert!(result.pre_restore_checkpoint().is_some());
+        assert!(
+            backend
+                .get(&MemoryId::try_from("memory:restore-baseline").expect("valid id"))
+                .expect("lookup should succeed")
+                .is_some()
+        );
+        assert!(
+            backend
+                .get(&MemoryId::try_from("memory:temporary").expect("valid id"))
+                .expect("lookup should succeed")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn optimize_can_create_a_pre_optimize_checkpoint() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:optimize",
+                "repo:temporal-plane",
+                "Optimize fixture",
+                "Used to validate checkpointed optimize flows.",
+            ))
+            .expect("memory should store");
+
+        let result = backend
+            .optimize(&OptimizeRequest::conservative())
+            .expect("optimize should succeed");
+
+        assert!(result.current_version().value() >= result.previous_version().value());
+        assert!(result.pre_optimize_checkpoint().is_some());
+        assert_eq!(result.pruned_versions(), 0);
+    }
+
+    #[test]
+    fn restore_by_raw_version_recreates_a_new_head() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:restore-by-version",
+                "repo:temporal-plane",
+                "Restore baseline",
+                "This state should be restored by version.",
+            ))
+            .expect("baseline memory should store");
+        let checkpoint = backend
+            .checkpoint(&CheckpointRequest::new(
+                CheckpointName::try_from("restore-by-version").expect("valid checkpoint name"),
+                Some("capture a recoverable version".to_string()),
+            ))
+            .expect("checkpoint should be created");
+        backend
+            .remember(build_memory(
+                "memory:temporary-version-state",
+                "repo:temporal-plane",
+                "Temporary state",
+                "This memory should disappear after version restore.",
+            ))
+            .expect("temporary memory should store");
+
+        let result = backend
+            .restore(&RestoreRequest::new(CheckpointSelector::Version(
+                checkpoint.version(),
+            )))
+            .expect("restore by version should succeed");
+
+        assert_eq!(result.restored_version(), checkpoint.version());
+        assert!(
+            backend
+                .get(&MemoryId::try_from("memory:temporary-version-state").expect("valid id"))
+                .expect("lookup should succeed")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn restore_can_skip_pre_restore_checkpoint_when_policy_requests_it() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:restore-no-safety-tag",
+                "repo:temporal-plane",
+                "Restore baseline",
+                "This state should restore without an automatic checkpoint.",
+            ))
+            .expect("baseline memory should store");
+        let checkpoint = backend
+            .checkpoint(&CheckpointRequest::new(
+                CheckpointName::try_from("restore-no-safety-tag").expect("valid checkpoint name"),
+                Some("capture baseline state".to_string()),
+            ))
+            .expect("checkpoint should be created");
+        backend
+            .remember(build_memory(
+                "memory:skip-restore-candidate",
+                "repo:temporal-plane",
+                "Temporary state",
+                "This memory should disappear after restore.",
+            ))
+            .expect("temporary memory should store");
+
+        let request = RestoreRequest::new(CheckpointSelector::Named(
+            CheckpointName::try_from("restore-no-safety-tag").expect("valid checkpoint name"),
+        ))
+        .with_retention_policy(
+            RetentionPolicy::conservative()
+                .with_pre_restore_checkpoint(PreOperationCheckpointPolicy::Skip),
+        );
+        let result = backend.restore(&request).expect("restore should succeed");
+
+        assert_eq!(result.restored_version(), checkpoint.version());
+        assert!(result.pre_restore_checkpoint().is_none());
+    }
+
+    #[test]
+    fn restore_rejects_unknown_targets() {
+        let (_temp_dir, mut backend) = new_backend();
+
+        let missing_checkpoint = backend
+            .restore(&RestoreRequest::new(CheckpointSelector::Named(
+                CheckpointName::try_from("missing-checkpoint").expect("valid checkpoint name"),
+            )))
+            .expect_err("missing checkpoint should fail");
+        assert!(matches!(
+            missing_checkpoint,
+            LanceDbError::CheckpointNotFound { .. }
+        ));
+
+        let missing_version = backend
+            .restore(&RestoreRequest::new(CheckpointSelector::Version(
+                VersionNumber::new(999),
+            )))
+            .expect_err("missing version should fail");
+        assert!(matches!(
+            missing_version,
+            LanceDbError::VersionNotFound { .. }
+        ));
+    }
+
+    #[test]
+    fn optimize_prune_rejects_tagged_old_versions() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:protected",
+                "repo:temporal-plane",
+                "Protected history",
+                "Tagged versions should block destructive cleanup.",
+            ))
+            .expect("memory should store");
+        backend
+            .checkpoint(&CheckpointRequest::new(
+                CheckpointName::try_from("protected-history").expect("valid checkpoint name"),
+                Some("tagged version must remain recoverable".to_string()),
+            ))
+            .expect("checkpoint should be created");
+        backend
+            .remember(build_memory(
+                "memory:newer",
+                "repo:temporal-plane",
+                "Newer history",
+                "Creates a later head so an older tagged version exists.",
+            ))
+            .expect("newer memory should store");
+
+        let request = OptimizeRequest::new(
+            RetentionPolicy::conservative()
+                .with_cleanup_mode(CleanupMode::AllowPrune)
+                .with_minimum_age_days(0),
+        )
+        .with_prune_old_versions(true);
+        let error = backend
+            .optimize(&request)
+            .expect_err("tagged old versions should block pruning");
+
+        assert!(error.to_string().to_lowercase().contains("tag"));
+    }
+
+    #[test]
+    fn optimize_prune_removes_old_untagged_versions() {
+        let (_temp_dir, mut backend) = new_backend();
+        backend
+            .remember(build_memory(
+                "memory:prune-baseline",
+                "repo:temporal-plane",
+                "Prunable baseline",
+                "This version should become prunable.",
+            ))
+            .expect("baseline memory should store");
+        backend
+            .remember(build_memory(
+                "memory:prune-current",
+                "repo:temporal-plane",
+                "Current state",
+                "This keeps a newer head version available.",
+            ))
+            .expect("current memory should store");
+
+        let request = OptimizeRequest::new(
+            RetentionPolicy::conservative()
+                .with_cleanup_mode(CleanupMode::AllowPrune)
+                .with_minimum_age_days(0)
+                .with_delete_unverified(true)
+                .with_pre_optimize_checkpoint(PreOperationCheckpointPolicy::Skip),
+        )
+        .with_prune_old_versions(true);
+        let result = backend
+            .optimize(&request)
+            .expect("untagged old versions should be prunable");
+
+        assert!(result.pruned_versions() > 0);
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
 use temporal_plane_core::{
     CheckpointName, DisclosureDepth, EntityName, MemoryId, ScopeId, SessionId, SourceRef, TagName,
     ToolName,
@@ -47,6 +47,8 @@ pub(crate) enum Command {
     History(HistoryArgs),
     Checkpoint(CheckpointArgs),
     Versions(VersionsArgs),
+    Restore(RestoreArgs),
+    Optimize(OptimizeArgs),
     Stats(StatsArgs),
     Export(ExportArgs),
     Import(ImportArgs),
@@ -164,6 +166,30 @@ pub(crate) struct CheckpointArgs {
 pub(crate) struct VersionsArgs {
     #[arg(long, value_parser = clap::value_parser!(u16).range(1..=1000), default_value_t = DEFAULT_HISTORY_LIMIT)]
     pub(crate) limit: u16,
+}
+
+#[derive(clap::Args, Debug)]
+#[command(group(
+    ArgGroup::new("restore_target")
+        .required(true)
+        .multiple(false)
+        .args(["checkpoint", "version"])
+))]
+pub(crate) struct RestoreArgs {
+    #[arg(long, value_parser = parse_checkpoint_name, group = "restore_target")]
+    pub(crate) checkpoint: Option<CheckpointName>,
+
+    #[arg(long, group = "restore_target")]
+    pub(crate) version: Option<u64>,
+}
+
+#[derive(clap::Args, Debug)]
+pub(crate) struct OptimizeArgs {
+    #[arg(long)]
+    pub(crate) prune: bool,
+
+    #[arg(long, value_parser = clap::value_parser!(u16).range(0..=3650), default_value_t = 30)]
+    pub(crate) older_than_days: u16,
 }
 
 #[derive(clap::Args, Debug)]

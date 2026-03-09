@@ -168,29 +168,32 @@ mod identifiers;
 
 pub mod checkpoints;
 pub mod errors;
+pub mod maintenance;
 pub mod memory;
 pub mod query;
 pub mod retention;
 pub mod traits;
 
 pub use checkpoints::{
-    Checkpoint, CheckpointRequest, CheckpointSelector, CheckpointSummary, VersionNumber,
-    VersionRecord,
+    Checkpoint, CheckpointRequest, CheckpointSelector, CheckpointSummary, RestoreRequest,
+    RestoreResult, VersionNumber, VersionRecord,
 };
 pub use errors::CoreError;
 pub use identifiers::{
     CheckpointName, EntityName, MemoryId, RecordedAt, ScopeId, SessionId, SourceRef, TagName,
     ToolName,
 };
+pub use maintenance::{OptimizeRequest, OptimizeResult};
 pub use memory::{Confidence, Importance, MemoryKind, MemoryRecord, MemoryRecordBuilder, PinState};
 pub use query::{
     DisclosureDepth, HistoryQuery, QueryLimit, RecallEntry, RecallExplanation, RecallLayer,
     RecallQuery, RecallReason, RecallResult, SearchQuery, StatsQuery, StatsSnapshot,
 };
 pub use retention::{
-    CheckpointProtection, CleanupMode, PreCleanupCheckpointPolicy, RetentionPolicy,
+    CheckpointProtection, CleanupMode, PreCleanupCheckpointPolicy, PreOperationCheckpointPolicy,
+    RetentionPolicy,
 };
 pub use traits::{
     BackendCapabilities, BackendCapability, CheckpointBackend, HistoryBackend, MemoryRepository,
-    PinningBackend, RecallBackend, StatsBackend, StorageBackend,
+    OptimizeBackend, PinningBackend, RecallBackend, RestoreBackend, StatsBackend, StorageBackend,
 };

@@ -1,14 +1,18 @@
 use std::{collections::BTreeMap, path::Path};
 
-use temporal_plane_core::{Confidence, Importance, MemoryRecord, PinState, QueryLimit};
+use temporal_plane_core::{
+    CheckpointSelector, Confidence, Importance, MemoryRecord, OptimizeRequest, OptimizeResult,
+    PinState, QueryLimit, RestoreResult,
+};
 use temporal_plane_lancedb::{LanceDbBackend, LanceDbError};
 
 use crate::{
     cli::{Command, RememberArgs},
     errors::CliError,
     output::{
-        CheckpointResultView, CommandOutput, MemoryListView, MemoryResultView, RecallEntryView,
-        RecallResultView, StatsResultView, StatusView, VersionListView, checkpoint_view,
+        CheckpointResultView, CommandOutput, MemoryListView, MemoryResultView, OptimizeResultView,
+        OptimizeRetentionView, RecallEntryView, RecallResultView, RestoreResultView,
+        RestoreTargetView, StatsResultView, StatusView, VersionListView, checkpoint_view,
         disclosure_depth_name, memory_detail_view, memory_summary_view, recall_entry_view,
         stats_view, version_view,
     },
@@ -19,9 +23,11 @@ mod export;
 mod history;
 mod import;
 mod init;
+mod optimize;
 mod pins;
 mod recall;
 mod remember;
+mod restore;
 mod search;
 mod show;
 mod stats;
@@ -38,6 +44,8 @@ pub(crate) fn execute(command: &Command, store_path: &Path) -> Result<CommandOut
         Command::History(args) => history::run(store_path, args),
         Command::Checkpoint(args) => checkpoint::run(store_path, args),
         Command::Versions(args) => versions::run(store_path, args),
+        Command::Restore(args) => restore::run(store_path, args),
+        Command::Optimize(args) => optimize::run(store_path, args),
         Command::Stats(args) => stats::run(store_path, args),
         Command::Export(args) => export::run(store_path, args),
         Command::Import(args) => import::run(store_path, args),
@@ -183,6 +191,50 @@ pub(super) fn version_list_result(
         count: versions.len(),
         scope,
         versions: versions.iter().map(version_view).collect(),
+    }))
+}
+
+pub(super) fn restore_result(result: &RestoreResult) -> CommandOutput {
+    let target = match result.target() {
+        CheckpointSelector::Named(name) => RestoreTargetView {
+            kind: "checkpoint",
+            name: Some(name.as_str().to_owned()),
+            version: result.restored_version().value(),
+        },
+        CheckpointSelector::Version(version) => RestoreTargetView {
+            kind: "version",
+            name: None,
+            version: version.value(),
+        },
+    };
+
+    CommandOutput::Restore(Box::new(RestoreResultView {
+        command: "restore",
+        target,
+        previous_version: result.previous_version().value(),
+        restored_version: result.restored_version().value(),
+        current_version: result.current_version().value(),
+        pre_restore_checkpoint: result.pre_restore_checkpoint().map(checkpoint_view),
+    }))
+}
+
+pub(super) fn optimize_result(request: &OptimizeRequest, result: &OptimizeResult) -> CommandOutput {
+    let retention = request.retention_policy();
+
+    CommandOutput::Optimize(Box::new(OptimizeResultView {
+        command: "optimize",
+        previous_version: result.previous_version().value(),
+        current_version: result.current_version().value(),
+        compacted: result.compacted(),
+        prune_old_versions: request.prune_old_versions(),
+        pruned_versions: result.pruned_versions(),
+        bytes_removed: result.bytes_removed(),
+        retention: OptimizeRetentionView {
+            minimum_age_days: retention.minimum_age_days(),
+            delete_unverified: retention.delete_unverified(),
+            error_if_tagged_old_versions: retention.error_if_tagged_old_versions(),
+        },
+        pre_optimize_checkpoint: result.pre_optimize_checkpoint().map(checkpoint_view),
     }))
 }
 

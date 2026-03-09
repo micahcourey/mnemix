@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::output::{
     CheckpointResultView, CommandOutput, MemoryDetailView, MemoryListView, MemoryResultView,
-    MemorySummaryView, RecallEntryView, RecallResultView, StatsResultView, StatusView,
-    VersionListView,
+    MemorySummaryView, OptimizeResultView, RecallEntryView, RecallResultView, RestoreResultView,
+    StatsResultView, StatusView, VersionListView,
 };
 
 pub(crate) fn render_human(output: &CommandOutput) -> String {
@@ -15,6 +15,8 @@ pub(crate) fn render_human(output: &CommandOutput) -> String {
         CommandOutput::Recall(view) => render_recall(&mut rendered, view),
         CommandOutput::Checkpoint(view) => render_checkpoint(&mut rendered, view),
         CommandOutput::VersionList(view) => render_version_list(&mut rendered, view),
+        CommandOutput::Restore(view) => render_restore(&mut rendered, view),
+        CommandOutput::Optimize(view) => render_optimize(&mut rendered, view),
         CommandOutput::Stats(view) => render_stats(&mut rendered, view),
     }
     rendered
@@ -90,6 +92,31 @@ fn render_recall(buffer: &mut String, view: &RecallResultView) {
     render_recall_section(buffer, "archival", &view.archival);
 }
 
+fn render_restore(buffer: &mut String, view: &RestoreResultView) {
+    push_line(buffer, view.command);
+    push_line(buffer, &format!("target_kind: {}", view.target.kind));
+    if let Some(name) = &view.target.name {
+        push_line(buffer, &format!("target_name: {name}"));
+    }
+    push_line(
+        buffer,
+        &format!("restored_version: {}", view.restored_version),
+    );
+    push_line(
+        buffer,
+        &format!("previous_version: {}", view.previous_version),
+    );
+    push_line(
+        buffer,
+        &format!("current_version: {}", view.current_version),
+    );
+    if let Some(checkpoint) = &view.pre_restore_checkpoint {
+        push_line(buffer, "pre_restore_checkpoint:");
+        push_line(buffer, &format!("  name: {}", checkpoint.name));
+        push_line(buffer, &format!("  version: {}", checkpoint.version));
+    }
+}
+
 fn render_version_list(buffer: &mut String, view: &VersionListView) {
     push_line(
         buffer,
@@ -137,6 +164,54 @@ fn render_stats(buffer: &mut String, view: &StatsResultView) {
     );
     if let Some(checkpoint) = &view.stats.latest_checkpoint {
         push_line(buffer, &format!("latest_checkpoint: {checkpoint}"));
+    }
+}
+
+fn render_optimize(buffer: &mut String, view: &OptimizeResultView) {
+    push_line(buffer, view.command);
+    push_line(
+        buffer,
+        &format!("previous_version: {}", view.previous_version),
+    );
+    push_line(
+        buffer,
+        &format!("current_version: {}", view.current_version),
+    );
+    push_line(buffer, &format!("compacted: {}", view.compacted));
+    push_line(
+        buffer,
+        &format!("prune_old_versions: {}", view.prune_old_versions),
+    );
+    push_line(
+        buffer,
+        &format!("pruned_versions: {}", view.pruned_versions),
+    );
+    push_line(buffer, &format!("bytes_removed: {}", view.bytes_removed));
+    push_line(
+        buffer,
+        &format!(
+            "retention_minimum_age_days: {}",
+            view.retention.minimum_age_days
+        ),
+    );
+    push_line(
+        buffer,
+        &format!(
+            "retention_delete_unverified: {}",
+            view.retention.delete_unverified
+        ),
+    );
+    push_line(
+        buffer,
+        &format!(
+            "retention_error_if_tagged_old_versions: {}",
+            view.retention.error_if_tagged_old_versions
+        ),
+    );
+    if let Some(checkpoint) = &view.pre_optimize_checkpoint {
+        push_line(buffer, "pre_optimize_checkpoint:");
+        push_line(buffer, &format!("  name: {}", checkpoint.name));
+        push_line(buffer, &format!("  version: {}", checkpoint.version));
     }
 }
 
@@ -259,7 +334,7 @@ mod tests {
     use insta::assert_snapshot;
 
     use super::*;
-    use crate::output::{CheckpointView, StatsView, VersionView};
+    use crate::output::{CheckpointView, OptimizeRetentionView, StatsView, VersionView};
 
     fn demo_memory_detail() -> MemoryDetailView {
         MemoryDetailView {
@@ -510,6 +585,74 @@ name: milestone-3
 version: 7
 created_at: 1970-01-01T01:06:40Z
 description: CLI MVP baseline
+");
+    }
+
+    #[test]
+    fn restore_and_optimize_output_snapshots() {
+        let restore_output = CommandOutput::Restore(Box::new(RestoreResultView {
+            command: "restore",
+            target: crate::output::RestoreTargetView {
+                kind: "checkpoint",
+                name: Some("milestone-5".to_owned()),
+                version: 3,
+            },
+            previous_version: 7,
+            restored_version: 3,
+            current_version: 8,
+            pre_restore_checkpoint: Some(CheckpointView {
+                name: "pre-restore-v7".to_owned(),
+                version: 7,
+                created_at: "1970-01-01T01:16:40Z".to_owned(),
+                description: None,
+            }),
+        }));
+        let optimize_output = CommandOutput::Optimize(Box::new(OptimizeResultView {
+            command: "optimize",
+            previous_version: 8,
+            current_version: 9,
+            compacted: true,
+            prune_old_versions: true,
+            pruned_versions: 2,
+            bytes_removed: 4096,
+            retention: OptimizeRetentionView {
+                minimum_age_days: 30,
+                delete_unverified: false,
+                error_if_tagged_old_versions: true,
+            },
+            pre_optimize_checkpoint: Some(CheckpointView {
+                name: "pre-optimize-v8".to_owned(),
+                version: 8,
+                created_at: "1970-01-01T01:23:20Z".to_owned(),
+                description: None,
+            }),
+        }));
+
+        assert_snapshot!(render_human(&restore_output), @r"
+restore
+target_kind: checkpoint
+target_name: milestone-5
+restored_version: 3
+previous_version: 7
+current_version: 8
+pre_restore_checkpoint:
+  name: pre-restore-v7
+  version: 7
+");
+        assert_snapshot!(render_human(&optimize_output), @r"
+optimize
+previous_version: 8
+current_version: 9
+compacted: true
+prune_old_versions: true
+pruned_versions: 2
+bytes_removed: 4096
+retention_minimum_age_days: 30
+retention_delete_unverified: false
+retention_error_if_tagged_old_versions: true
+pre_optimize_checkpoint:
+  name: pre-optimize-v8
+  version: 8
 ");
     }
 }

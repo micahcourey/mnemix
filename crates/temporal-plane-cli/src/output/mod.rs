@@ -30,6 +30,8 @@ pub(crate) enum CommandOutput {
     Recall(Box<RecallResultView>),
     Checkpoint(Box<CheckpointResultView>),
     VersionList(Box<VersionListView>),
+    Restore(Box<RestoreResultView>),
+    Optimize(Box<OptimizeResultView>),
     Stats(Box<StatsResultView>),
 }
 
@@ -66,6 +68,23 @@ pub(crate) struct CheckpointResultView {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct RestoreResultView {
+    pub(crate) command: &'static str,
+    pub(crate) target: RestoreTargetView,
+    pub(crate) previous_version: u64,
+    pub(crate) restored_version: u64,
+    pub(crate) current_version: u64,
+    pub(crate) pre_restore_checkpoint: Option<CheckpointView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct RestoreTargetView {
+    pub(crate) kind: &'static str,
+    pub(crate) name: Option<String>,
+    pub(crate) version: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct RecallResultView {
     pub(crate) command: &'static str,
     pub(crate) scope: Option<String>,
@@ -96,6 +115,26 @@ pub(crate) struct VersionListView {
 pub(crate) struct StatsResultView {
     pub(crate) command: &'static str,
     pub(crate) stats: StatsView,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct OptimizeResultView {
+    pub(crate) command: &'static str,
+    pub(crate) previous_version: u64,
+    pub(crate) current_version: u64,
+    pub(crate) compacted: bool,
+    pub(crate) prune_old_versions: bool,
+    pub(crate) pruned_versions: u64,
+    pub(crate) bytes_removed: u64,
+    pub(crate) retention: OptimizeRetentionView,
+    pub(crate) pre_optimize_checkpoint: Option<CheckpointView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct OptimizeRetentionView {
+    pub(crate) minimum_age_days: u16,
+    pub(crate) delete_unverified: bool,
+    pub(crate) error_if_tagged_old_versions: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
