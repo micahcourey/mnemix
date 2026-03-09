@@ -16,3 +16,19 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+humantime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+temporal-plane-core = { path = "../temporal-plane-core" }
+temporal-plane-lancedb = { path = "../temporal-plane-lancedb" }
+thiserror.workspace = true
+
+[[bin]]
+name = "temporal-plane"
+path = "src/main.rs"
+
+[dev-dependencies]
+assert_cmd = "2.1.1"
+insta = "1.44.1"
+tempfile = "3.23.0"
