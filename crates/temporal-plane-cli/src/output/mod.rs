@@ -3,7 +3,8 @@ use std::{collections::BTreeMap, time::SystemTime};
 use humantime::format_rfc3339;
 use serde::Serialize;
 use temporal_plane_core::{
-    Checkpoint, MemoryRecord, PinState, StatsSnapshot, VersionRecord, memory::MemoryKind,
+    Checkpoint, DisclosureDepth, MemoryRecord, PinState, RecallEntry, RecallLayer, RecallReason,
+    StatsSnapshot, VersionRecord, memory::MemoryKind,
 };
 
 use crate::errors::CliError;
@@ -26,6 +27,7 @@ pub(crate) enum CommandOutput {
     Status(Box<StatusView>),
     Memory(Box<MemoryResultView>),
     MemoryList(Box<MemoryListView>),
+    Recall(Box<RecallResultView>),
     Checkpoint(Box<CheckpointResultView>),
     VersionList(Box<VersionListView>),
     Stats(Box<StatsResultView>),
@@ -61,6 +63,25 @@ pub(crate) struct CheckpointResultView {
     pub(crate) command: &'static str,
     pub(crate) action: &'static str,
     pub(crate) checkpoint: CheckpointView,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct RecallResultView {
+    pub(crate) command: &'static str,
+    pub(crate) scope: Option<String>,
+    pub(crate) query_text: Option<String>,
+    pub(crate) disclosure_depth: &'static str,
+    pub(crate) count: usize,
+    pub(crate) pinned_context: Vec<RecallEntryView>,
+    pub(crate) summaries: Vec<RecallEntryView>,
+    pub(crate) archival: Vec<RecallEntryView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct RecallEntryView {
+    pub(crate) layer: &'static str,
+    pub(crate) reasons: Vec<&'static str>,
+    pub(crate) memory: MemorySummaryView,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -250,6 +271,20 @@ pub(crate) fn checkpoint_view(checkpoint: &Checkpoint) -> CheckpointView {
     }
 }
 
+pub(crate) fn recall_entry_view(entry: &RecallEntry) -> RecallEntryView {
+    RecallEntryView {
+        layer: recall_layer_name(entry.explanation().layer()),
+        reasons: entry
+            .explanation()
+            .reasons()
+            .iter()
+            .copied()
+            .map(recall_reason_name)
+            .collect(),
+        memory: memory_summary_view(entry.memory()),
+    }
+}
+
 pub(crate) fn version_view(record: &VersionRecord) -> VersionView {
     VersionView {
         version: record.version().value(),
@@ -280,6 +315,34 @@ pub(crate) fn format_timestamp(value: SystemTime) -> String {
 
 fn pin_reason(pin_state: &PinState) -> Option<String> {
     pin_state.reason().map(ToOwned::to_owned)
+}
+
+pub(crate) const fn disclosure_depth_name(depth: DisclosureDepth) -> &'static str {
+    match depth {
+        DisclosureDepth::SummaryOnly => "summary_only",
+        DisclosureDepth::SummaryThenPinned => "summary_then_pinned",
+        DisclosureDepth::Full => "full",
+    }
+}
+
+fn recall_layer_name(layer: RecallLayer) -> &'static str {
+    match layer {
+        RecallLayer::PinnedContext => "pinned_context",
+        RecallLayer::Summary => "summary",
+        RecallLayer::Archival => "archival",
+    }
+}
+
+fn recall_reason_name(reason: RecallReason) -> &'static str {
+    match reason {
+        RecallReason::Pinned => "pinned",
+        RecallReason::ScopeFilter => "scope_filter",
+        RecallReason::TextMatch => "text_match",
+        RecallReason::SummaryKind => "summary_kind",
+        RecallReason::ImportanceBoost => "importance_boost",
+        RecallReason::RecencyBoost => "recency_boost",
+        RecallReason::ArchivalExpansion => "archival_expansion",
+    }
 }
 
 fn memory_kind_name(kind: MemoryKind) -> &'static str {

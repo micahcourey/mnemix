@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CheckpointName, CoreError, ScopeId};
+use crate::{CheckpointName, CoreError, MemoryRecord, ScopeId};
 
 const MAX_QUERY_LIMIT: u16 = 1_000;
 
@@ -68,6 +68,156 @@ pub enum DisclosureDepth {
     SummaryThenPinned,
     /// Return fully expanded detail immediately.
     Full,
+}
+
+/// Identifies the retrieval layer an item was surfaced from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum RecallLayer {
+    /// High-priority pinned context loaded ahead of general recall.
+    PinnedContext,
+    /// Compact summaries favored before deeper archival memory.
+    Summary,
+    /// Deeper archival memory expanded on demand.
+    Archival,
+}
+
+/// Explains why a recall item was surfaced.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum RecallReason {
+    /// The item is pinned and therefore received higher priority.
+    Pinned,
+    /// The item matched the requested scope filter.
+    ScopeFilter,
+    /// The item matched the requested text hint.
+    TextMatch,
+    /// The item is a summary memory favored for compact recall.
+    SummaryKind,
+    /// The item received an importance-based boost to its rank.
+    ImportanceBoost,
+    /// The item received a recency-based boost to its rank.
+    RecencyBoost,
+    /// The item was included because archival expansion was requested.
+    ArchivalExpansion,
+}
+
+/// Machine-readable explanation metadata for a surfaced recall item.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RecallExplanation {
+    layer: RecallLayer,
+    reasons: Vec<RecallReason>,
+}
+
+impl RecallExplanation {
+    /// Creates a new explanation payload.
+    #[must_use]
+    pub fn new(layer: RecallLayer, reasons: Vec<RecallReason>) -> Self {
+        Self { layer, reasons }
+    }
+
+    /// Returns the retrieval layer that surfaced the item.
+    #[must_use]
+    pub const fn layer(&self) -> RecallLayer {
+        self.layer
+    }
+
+    /// Returns the ordered explanation reasons.
+    #[must_use]
+    pub fn reasons(&self) -> &[RecallReason] {
+        &self.reasons
+    }
+}
+
+/// A single memory item returned from progressive disclosure recall.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RecallEntry {
+    memory: MemoryRecord,
+    explanation: RecallExplanation,
+}
+
+impl RecallEntry {
+    /// Creates a new recall entry.
+    #[must_use]
+    pub fn new(memory: MemoryRecord, explanation: RecallExplanation) -> Self {
+        Self {
+            memory,
+            explanation,
+        }
+    }
+
+    /// Returns the surfaced memory.
+    #[must_use]
+    pub const fn memory(&self) -> &MemoryRecord {
+        &self.memory
+    }
+
+    /// Returns the explanation metadata.
+    #[must_use]
+    pub const fn explanation(&self) -> &RecallExplanation {
+        &self.explanation
+    }
+}
+
+/// Layered recall results for progressive disclosure flows.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RecallResult {
+    disclosure_depth: DisclosureDepth,
+    pinned_context: Vec<RecallEntry>,
+    summaries: Vec<RecallEntry>,
+    archival: Vec<RecallEntry>,
+}
+
+impl RecallResult {
+    /// Creates a new layered recall result.
+    #[must_use]
+    pub fn new(
+        disclosure_depth: DisclosureDepth,
+        pinned_context: Vec<RecallEntry>,
+        summaries: Vec<RecallEntry>,
+        archival: Vec<RecallEntry>,
+    ) -> Self {
+        Self {
+            disclosure_depth,
+            pinned_context,
+            summaries,
+            archival,
+        }
+    }
+
+    /// Returns the disclosure depth used to build the result.
+    #[must_use]
+    pub const fn disclosure_depth(&self) -> DisclosureDepth {
+        self.disclosure_depth
+    }
+
+    /// Returns the pinned-context layer.
+    #[must_use]
+    pub fn pinned_context(&self) -> &[RecallEntry] {
+        &self.pinned_context
+    }
+
+    /// Returns the summary layer.
+    #[must_use]
+    pub fn summaries(&self) -> &[RecallEntry] {
+        &self.summaries
+    }
+
+    /// Returns the archival layer.
+    #[must_use]
+    pub fn archival(&self) -> &[RecallEntry] {
+        &self.archival
+    }
+
+    /// Returns the total number of surfaced items across all layers.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.pinned_context.len() + self.summaries.len() + self.archival.len()
+    }
+
+    /// Returns `true` when every layer is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.count() == 0
+    }
 }
 
 /// A recall request tuned for progressive disclosure.
@@ -331,7 +481,25 @@ impl StatsSnapshot {
 
 #[cfg(test)]
 mod tests {
+    use crate::{MemoryId, MemoryKind, ScopeId};
+
     use super::*;
+
+    fn demo_memory() -> MemoryRecord {
+        MemoryRecord::builder(
+            MemoryId::try_from("memory:recall").expect("memory id"),
+            ScopeId::try_from("repo:temporal-plane").expect("scope id"),
+            MemoryKind::Summary,
+        )
+        .title("Recall summary")
+        .expect("title")
+        .summary("Compact recall")
+        .expect("summary")
+        .detail("Expanded archival detail")
+        .expect("detail")
+        .build()
+        .expect("memory")
+    }
 
     #[test]
     fn query_limit_rejects_zero() {
@@ -357,6 +525,41 @@ mod tests {
             Err(CoreError::MissingField {
                 field: "scope_or_text"
             })
+        );
+    }
+
+    #[test]
+    fn recall_query_preserves_disclosure_depth() {
+        let query = RecallQuery::builder()
+            .scope(ScopeId::try_from("repo:temporal-plane").expect("scope"))
+            .disclosure_depth(DisclosureDepth::Full)
+            .build()
+            .expect("query should build");
+
+        assert_eq!(query.disclosure_depth(), DisclosureDepth::Full);
+    }
+
+    #[test]
+    fn recall_result_counts_all_layers() {
+        let entry = RecallEntry::new(
+            demo_memory(),
+            RecallExplanation::new(
+                RecallLayer::Summary,
+                vec![RecallReason::SummaryKind, RecallReason::ImportanceBoost],
+            ),
+        );
+        let result = RecallResult::new(
+            DisclosureDepth::SummaryThenPinned,
+            Vec::new(),
+            vec![entry],
+            Vec::new(),
+        );
+
+        assert_eq!(result.count(), 1);
+        assert!(!result.is_empty());
+        assert_eq!(
+            result.summaries()[0].explanation().layer(),
+            RecallLayer::Summary
         );
     }
 

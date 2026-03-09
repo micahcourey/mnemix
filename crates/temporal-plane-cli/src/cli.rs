@@ -2,7 +2,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use temporal_plane_core::{
-    CheckpointName, EntityName, MemoryId, ScopeId, SessionId, SourceRef, TagName, ToolName,
+    CheckpointName, DisclosureDepth, EntityName, MemoryId, ScopeId, SessionId, SourceRef, TagName,
+    ToolName,
 };
 
 use crate::output::OutputFormat;
@@ -39,6 +40,7 @@ impl Cli {
 pub(crate) enum Command {
     Init,
     Remember(Box<RememberArgs>),
+    Recall(RecallArgs),
     Search(SearchArgs),
     Show(ShowArgs),
     Pins(PinsArgs),
@@ -48,6 +50,21 @@ pub(crate) enum Command {
     Stats(StatsArgs),
     Export(ExportArgs),
     Import(ImportArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub(crate) struct RecallArgs {
+    #[arg(long)]
+    pub(crate) text: Option<String>,
+
+    #[arg(long, value_parser = parse_scope_id)]
+    pub(crate) scope: Option<ScopeId>,
+
+    #[arg(long, value_enum, default_value_t = DisclosureDepthArg::SummaryThenPinned)]
+    pub(crate) disclosure_depth: DisclosureDepthArg,
+
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=1000), default_value_t = DEFAULT_SEARCH_LIMIT)]
+    pub(crate) limit: u16,
 }
 
 #[derive(clap::Args, Debug)]
@@ -184,6 +201,13 @@ pub(crate) enum MemoryKindArg {
     Warning,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum DisclosureDepthArg {
+    SummaryOnly,
+    SummaryThenPinned,
+    Full,
+}
+
 impl From<MemoryKindArg> for temporal_plane_core::MemoryKind {
     fn from(value: MemoryKindArg) -> Self {
         match value {
@@ -194,6 +218,16 @@ impl From<MemoryKindArg> for temporal_plane_core::MemoryKind {
             MemoryKindArg::Fact => Self::Fact,
             MemoryKindArg::Procedure => Self::Procedure,
             MemoryKindArg::Warning => Self::Warning,
+        }
+    }
+}
+
+impl From<DisclosureDepthArg> for DisclosureDepth {
+    fn from(value: DisclosureDepthArg) -> Self {
+        match value {
+            DisclosureDepthArg::SummaryOnly => Self::SummaryOnly,
+            DisclosureDepthArg::SummaryThenPinned => Self::SummaryThenPinned,
+            DisclosureDepthArg::Full => Self::Full,
         }
     }
 }

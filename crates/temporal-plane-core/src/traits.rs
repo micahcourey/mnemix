@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    Checkpoint, CheckpointRequest, HistoryQuery, MemoryId, MemoryRecord, RecallQuery, SearchQuery,
-    StatsQuery, StatsSnapshot, VersionRecord,
+    Checkpoint, CheckpointRequest, HistoryQuery, MemoryId, MemoryRecord, RecallQuery, RecallResult,
+    SearchQuery, StatsQuery, StatsSnapshot, VersionRecord,
 };
 
 /// An individually advertised backend capability.
@@ -12,6 +12,8 @@ use crate::{
 pub enum BackendCapability {
     /// The backend can store and fetch durable memories.
     Remember,
+    /// The backend can explicitly pin and unpin memories.
+    Pinning,
     /// The backend can execute recall and search flows.
     Search,
     /// The backend can inspect version history.
@@ -35,6 +37,12 @@ impl BackendCapabilities {
     #[must_use]
     pub fn supports_remember(&self) -> bool {
         self.0.contains(&BackendCapability::Remember)
+    }
+
+    /// Returns `true` when the backend supports explicit pinning operations.
+    #[must_use]
+    pub fn supports_pinning(&self) -> bool {
+        self.0.contains(&BackendCapability::Pinning)
     }
 
     /// Returns `true` when the backend supports recall and search.
@@ -84,15 +92,34 @@ pub trait MemoryRepository: StorageBackend {
     fn get(&self, id: &MemoryId) -> Result<Option<MemoryRecord>, Self::Error>;
 }
 
+/// Supports explicit pinning state transitions for existing memories.
+pub trait PinningBackend: StorageBackend {
+    /// Pins a memory, optionally updating its existing pin reason.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`](StorageBackend::Error) when the backend cannot
+    /// perform the update.
+    fn pin(&mut self, id: &MemoryId, reason: &str) -> Result<Option<MemoryRecord>, Self::Error>;
+
+    /// Removes a pin from a memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`](StorageBackend::Error) when the backend cannot
+    /// perform the update.
+    fn unpin(&mut self, id: &MemoryId) -> Result<Option<MemoryRecord>, Self::Error>;
+}
+
 /// Supports recall and text-first retrieval flows.
 pub trait RecallBackend: StorageBackend {
-    /// Returns memory records relevant to a recall request.
+    /// Returns layered memory results relevant to a recall request.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`](StorageBackend::Error) when recall is
     /// unsupported or execution fails.
-    fn recall(&self, query: &RecallQuery) -> Result<Vec<MemoryRecord>, Self::Error>;
+    fn recall(&self, query: &RecallQuery) -> Result<RecallResult, Self::Error>;
 
     /// Returns memory records relevant to a text-first search request.
     ///
