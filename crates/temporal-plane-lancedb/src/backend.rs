@@ -668,61 +668,67 @@ impl PinningBackend for LanceDbBackend {
 impl RecallBackend for LanceDbBackend {
     fn recall(&self, query: &RecallQuery) -> Result<RecallResult, Self::Error> {
         let limit = usize::from(query.limit().value());
-        let payloads = self.query_payloads(
-            &self.memories,
-            query
-                .scope()
-                .map(|scope| string_filter("scope_id", scope.as_str())),
-            Some(recall_fetch_limit(limit)),
-            query.text().map(ToOwned::to_owned),
-        )?;
-
-        let mut records = decode_memory_records(payloads)?;
-        sort_recall_records(&mut records);
-        let explain_context = RecallExplainContext::from_records(&records);
-
         let pinned_limit = limit.min(PINNED_CONTEXT_HARD_CAP);
+        let mut remaining = limit;
 
-        let mut pinned_context = Vec::new();
-        let mut summaries = Vec::new();
-        let mut archival = Vec::new();
+        let pinned_context = if query.disclosure_depth() == DisclosureDepth::SummaryOnly {
+            Vec::new()
+        } else {
+            let layer_limit = pinned_limit.min(remaining);
+            let entries = self.recall_layer_entries(
+                query,
+                combine_filters([
+                    query
+                        .scope()
+                        .map(|scope| string_filter("scope_id", scope.as_str())),
+                    Some("pinned = true".to_owned()),
+                ]),
+                layer_limit,
+                RecallLayer::PinnedContext,
+            )?;
+            remaining = remaining.saturating_sub(entries.len());
+            entries
+        };
 
-        for record in records {
-            if pinned_context.len() + summaries.len() + archival.len() >= limit {
-                break;
-            }
+        let summaries = if remaining == 0 {
+            Vec::new()
+        } else {
+            let entries = self.recall_layer_entries(
+                query,
+                combine_filters([
+                    query
+                        .scope()
+                        .map(|scope| string_filter("scope_id", scope.as_str())),
+                    Some(string_filter("kind", memory_kind_name(MemoryKind::Summary))),
+                    (query.disclosure_depth() != DisclosureDepth::SummaryOnly)
+                        .then_some("pinned = false".to_owned()),
+                ]),
+                remaining,
+                RecallLayer::Summary,
+            )?;
+            remaining = remaining.saturating_sub(entries.len());
+            entries
+        };
 
-            if should_include_in_pinned_context(&record, query)
-                && pinned_context.len() < pinned_limit
-            {
-                pinned_context.push(recall_entry(
-                    record,
-                    RecallLayer::PinnedContext,
-                    query,
-                    &explain_context,
-                ));
-                continue;
-            }
-
-            if should_include_in_summaries(&record, query) {
-                summaries.push(recall_entry(
-                    record,
-                    RecallLayer::Summary,
-                    query,
-                    &explain_context,
-                ));
-                continue;
-            }
-
-            if should_include_in_archival(&record, query) {
-                archival.push(recall_entry(
-                    record,
-                    RecallLayer::Archival,
-                    query,
-                    &explain_context,
-                ));
-            }
-        }
+        let archival = if query.disclosure_depth() == DisclosureDepth::Full && remaining > 0 {
+            self.recall_layer_entries(
+                query,
+                combine_filters([
+                    query
+                        .scope()
+                        .map(|scope| string_filter("scope_id", scope.as_str())),
+                    Some("pinned = false".to_owned()),
+                    Some(format!(
+                        "kind != {}",
+                        sql_string_literal(memory_kind_name(MemoryKind::Summary))
+                    )),
+                ]),
+                remaining,
+                RecallLayer::Archival,
+            )?
+        } else {
+            Vec::new()
+        };
 
         Ok(RecallResult::new(
             query.disclosure_depth(),
@@ -868,6 +874,34 @@ impl CheckpointBackend for LanceDbBackend {
 }
 
 impl LanceDbBackend {
+    fn recall_layer_entries(
+        &self,
+        query: &RecallQuery,
+        filter: Option<String>,
+        limit: usize,
+        layer: RecallLayer,
+    ) -> Result<Vec<RecallEntry>, LanceDbError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let payloads = self.query_payloads(
+            &self.memories,
+            filter,
+            Some(recall_fetch_limit(limit)),
+            query.text().map(ToOwned::to_owned),
+        )?;
+        let mut records = decode_memory_records(payloads)?;
+        sort_recall_records(&mut records);
+        let explain_context = RecallExplainContext::from_records(&records);
+
+        Ok(records
+            .into_iter()
+            .take(limit)
+            .map(|record| recall_entry(record, layer, query, &explain_context))
+            .collect())
+    }
+
     fn update_memory_record(&mut self, record: &MemoryRecord) -> Result<(), LanceDbError> {
         let payload_json = serde_json::to_string(record)?;
         let (updated_secs, updated_nanos) =
@@ -965,6 +999,15 @@ fn string_filter(column: &str, value: &str) -> String {
     format!("{column} = '{}'", sql_escape(value))
 }
 
+fn combine_filters(filters: impl IntoIterator<Item = Option<String>>) -> Option<String> {
+    let filters = filters.into_iter().flatten().collect::<Vec<_>>();
+    if filters.is_empty() {
+        None
+    } else {
+        Some(filters.join(" AND "))
+    }
+}
+
 fn decode_memory_records(payloads: Vec<String>) -> Result<Vec<MemoryRecord>, LanceDbError> {
     payloads
         .into_iter()
@@ -997,22 +1040,6 @@ fn recall_rank_key(record: &MemoryRecord) -> (u8, u8, u8, SystemTime) {
         record.importance().value(),
         record.updated_at().value(),
     )
-}
-
-fn should_include_in_pinned_context(record: &MemoryRecord, query: &RecallQuery) -> bool {
-    query.disclosure_depth() != DisclosureDepth::SummaryOnly && record.pin_state().is_pinned()
-}
-
-fn should_include_in_summaries(record: &MemoryRecord, query: &RecallQuery) -> bool {
-    matches!(record.kind(), MemoryKind::Summary)
-        && (query.disclosure_depth() == DisclosureDepth::SummaryOnly
-            || !record.pin_state().is_pinned())
-}
-
-fn should_include_in_archival(record: &MemoryRecord, query: &RecallQuery) -> bool {
-    query.disclosure_depth() == DisclosureDepth::Full
-        && !record.pin_state().is_pinned()
-        && !matches!(record.kind(), MemoryKind::Summary)
 }
 
 struct RecallExplainContext {
@@ -1483,6 +1510,19 @@ mod tests {
                 updated_at_secs: 10,
             }))
             .expect("stable summary should store");
+        backend
+            .remember(build_memory_with(MemoryFixture {
+                id: "memory:summary-recent",
+                scope,
+                kind: MemoryKind::Summary,
+                title: "Recent summary",
+                summary: "Newer summary in the same layer.",
+                detail: "Keeps recency boosting scoped to the newest summary.",
+                importance: 50,
+                pin_reason: None,
+                updated_at_secs: 20,
+            }))
+            .expect("recent summary should store");
 
         let result = backend
             .recall(
@@ -1498,7 +1538,12 @@ mod tests {
         assert!(pinned_reasons.contains(&RecallReason::ImportanceBoost));
         assert!(pinned_reasons.contains(&RecallReason::RecencyBoost));
 
-        let summary_reasons = result.summaries()[0].explanation().reasons();
+        let stable_summary = result
+            .summaries()
+            .iter()
+            .find(|entry| entry.memory().id().as_str() == "memory:summary-stable")
+            .expect("stable summary should be present");
+        let summary_reasons = stable_summary.explanation().reasons();
         assert!(!summary_reasons.contains(&RecallReason::ImportanceBoost));
         assert!(!summary_reasons.contains(&RecallReason::RecencyBoost));
     }

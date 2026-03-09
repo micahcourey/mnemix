@@ -92,9 +92,9 @@ pub enum RecallReason {
     TextMatch,
     /// The item is a summary memory favored for compact recall.
     SummaryKind,
-    /// The item's importance score contributed to its rank.
+    /// The item received an importance-based boost to its rank.
     ImportanceBoost,
-    /// The item's recency contributed to its rank.
+    /// The item received a recency-based boost to its rank.
     RecencyBoost,
     /// The item was included because archival expansion was requested.
     ArchivalExpansion,
