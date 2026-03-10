@@ -121,11 +121,21 @@ main branch
 ### Standard Deployment
 
 1. Start from a clean `main` branch.
+  Commands:
+  `git checkout main`
+  `git pull --ff-only origin main`
 2. Bump the version in `python/mnemix/_version.py` and `Cargo.toml`.
 3. Update any release-facing docs that depend on the current release procedure or version.
 4. Run `./scripts/check-python-package.sh`.
 5. Merge the release-prep PR to `main`.
+  Commands:
+  `git checkout main`
+  `git pull --ff-only origin main`
 6. Create and publish a GitHub Release tagged `vX.Y.Z` from the verified `main` commit.
+  Commands:
+  `git tag -a vX.Y.Z -m "vX.Y.Z"`
+  `git push origin vX.Y.Z`
+  `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes`
 7. Wait for `.github/workflows/publish-python.yml` to complete successfully.
 8. Verify the new version on PyPI and in a clean install.
 
@@ -142,6 +152,12 @@ main branch
 2. Keep the diff minimal and directly tied to the failed release.
 3. Re-run `./scripts/check-python-package.sh` before publishing the emergency fix.
 4. Publish a new GitHub Release with the next version.
+  Commands:
+  `git checkout main`
+  `git pull --ff-only origin main`
+  `git tag -a vX.Y.Z -m "vX.Y.Z"`
+  `git push origin vX.Y.Z`
+  `gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes`
 
 ---
 
