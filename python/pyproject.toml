@@ -40,7 +40,7 @@ version = { attr = "mnemix._version.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["mnemix*", "mnemix*"]
+include = ["mnemix*"]
 
 [tool.setuptools.package-data]
 mnemix = ["_bin/*"]

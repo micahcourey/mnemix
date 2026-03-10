@@ -48,8 +48,6 @@ fi
 cleanup() {
 	rm -f "$python_root/mnemix/_bin/mnemix"
 	rm -f "$python_root/mnemix/_bin/mnemix.exe"
-	rm -f "$python_root/mnemix/_bin/mnemix"
-	rm -f "$python_root/mnemix/_bin/mnemix.exe"
 	rm -rf "$build_venv"
 	rmdir "$staging_dir" 2>/dev/null || true
 }

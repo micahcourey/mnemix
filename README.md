@@ -178,10 +178,10 @@ pip install mnemix
 from pathlib import Path
 from mnemix import Mnemix, RememberRequest
 
-tp = Mnemix(store=Path(".mnemix"))
-tp.init()
+client = Mnemix(store=Path(".mnemix"))
+client.init()
 
-tp.remember(RememberRequest(
+client.remember(RememberRequest(
     id="mem-001",
     scope="my-project",
     kind="decision",
@@ -193,17 +193,17 @@ tp.remember(RememberRequest(
 ))
 
 # Retrieve layered context
-context = tp.recall()
+context = client.recall()
 for entry in context.pinned_context:
     print(f"[pinned] {entry.memory.title}")
 
 # Full-text search
-results = tp.search("storage decision", scope="my-project")
+results = client.search("storage decision", scope="my-project")
 for m in results:
     print(f"{m.id}: {m.title} (importance={m.importance})")
 
 # Inspect store stats
-stats = tp.stats()
+stats = client.stats()
 print(f"Total memories: {stats.total_memories}")
 ```
 
@@ -260,7 +260,6 @@ mnemix/
 │   └── mnemix-test-support/
 ├── python/                        # Python package (mnemix on PyPI)
 │   ├── mnemix/
-│   └── mnemix/
 ├── adapters/
 │   └── ai-dx-toolkit/             # AI DX Toolkit adapter proof-of-concept
 ├── examples/                      # Runnable usage examples

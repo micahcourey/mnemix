@@ -6,11 +6,11 @@ from mnemix import (
     MnemixError,
     RememberRequest,
 )
-from mnemix import Mnemix
+from mnemix.client import Mnemix as ClientMnemix
 
 
 def test_mnemix_alias_points_at_mnemix_client() -> None:
-    assert Mnemix is Mnemix
+    assert Mnemix is ClientMnemix
 
 
 def test_mnemix_request_models_are_exported() -> None:

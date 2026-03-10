@@ -36,17 +36,7 @@ class TestFindBinary:
         call_args = mock_run.call_args[0][0]
         assert call_args[0] == "/custom/mnemix"
 
-    def test_legacy_env_var_still_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("MNEMIX_BINARY", raising=False)
-        monkeypatch.setenv("MNEMIX_BINARY", "/legacy/mnemix")
-        envelope = {"kind": "stats", "data": {"stats": {}}}
-        with patch("subprocess.run", return_value=_make_result(json.dumps(envelope))) as mock_run:
-            run(_STORE, "stats", [])
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == "/legacy/mnemix"
-
     def test_raises_when_binary_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("MNEMIX_BINARY", raising=False)
         monkeypatch.delenv("MNEMIX_BINARY", raising=False)
         with patch("mnemix._runner._find_bundled_binary", return_value=None), \
              patch("shutil.which", return_value=None):
@@ -54,7 +44,6 @@ class TestFindBinary:
                 run(_STORE, "init", [])
 
     def test_bundled_binary_used_when_present(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("MNEMIX_BINARY", raising=False)
         monkeypatch.delenv("MNEMIX_BINARY", raising=False)
         envelope = {"kind": "stats", "data": {"stats": {}}}
         with patch("mnemix._runner._find_bundled_binary", return_value="/wheel/mnemix"), \

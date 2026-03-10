@@ -1,7 +1,7 @@
 """Mnemix Python binding — high-level client.
 
 The :class:`Mnemix` client is the primary entry point for Python
-consumers.  It wraps the Rust ``tp`` CLI JSON surface; all product logic
+consumers. It wraps the Rust ``mnemix`` CLI JSON surface; all product logic
 remains in the Rust binary.
 
 Example usage::
@@ -10,10 +10,10 @@ Example usage::
     from mnemix import Mnemix
     from mnemix.models import RememberRequest
 
-    tp = Mnemix(store=Path(".mnemix"))
-    tp.init()
+    client = Mnemix(store=Path(".mnemix"))
+    client.init()
 
-    tp.remember(RememberRequest(
+    client.remember(RememberRequest(
         id="mem-001",
         scope="project-alpha",
         kind="observation",
@@ -22,7 +22,7 @@ Example usage::
         detail="Added Cargo.toml workspace, core, lancedb, cli, types crates.",
     ))
 
-    results = tp.search("scaffolding", scope="project-alpha")
+    results = client.search("scaffolding", scope="project-alpha")
     for m in results:
         print(m.title)
 """
@@ -56,7 +56,7 @@ _DEFAULT_STORE = Path(".mnemix")
 class Mnemix:
     """High-level Python client for a Mnemix store.
 
-    All operations delegate to the ``tp`` CLI binary via its ``--json`` output
+    All operations delegate to the ``mnemix`` CLI binary via its ``--json`` output
     mode.  No product logic is duplicated here.
 
     Args:

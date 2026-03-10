@@ -25,7 +25,7 @@ class MnemixCommandError(MnemixError):
 
 
 class MnemixBinaryNotFoundError(MnemixError):
-    """Raised when the ``tp`` binary cannot be located.
+    """Raised when the ``mnemix`` binary cannot be located.
 
     Install the Mnemix CLI and ensure it is on ``PATH``, or set the
     ``MNEMIX_BINARY`` environment variable to the absolute path of the binary.

@@ -57,7 +57,6 @@ from mnemix import Mnemix
 from mnemix._runner import _find_binary
 
 os.environ.pop("MNEMIX_BINARY", None)
-os.environ.pop("MNEMIX_BINARY", None)
 
 binary = _find_binary()
 print(binary)

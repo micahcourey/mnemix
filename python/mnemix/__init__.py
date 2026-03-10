@@ -1,7 +1,7 @@
 """Mnemix Python binding.
 
 This package provides a thin, typed Python client for the Mnemix
-local-first memory layer.  All product logic lives in the Rust ``tp`` CLI
+local-first memory layer. All product logic lives in the Rust ``mnemix`` CLI
 binary; this package wraps its JSON output surface.
 
 Quick start::
@@ -10,9 +10,9 @@ Quick start::
     from mnemix import Mnemix
     from mnemix.models import RememberRequest
 
-    tp = Mnemix(store=Path(".mnemix"))
-    tp.init()
-    tp.remember(RememberRequest(
+    client = Mnemix(store=Path(".mnemix"))
+    client.init()
+    client.remember(RememberRequest(
         id="mem-001",
         scope="my-project",
         kind="observation",
