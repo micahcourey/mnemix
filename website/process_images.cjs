@@ -6,8 +6,9 @@ async function processIcon() {
     let minX = image.bitmap.width, minY = image.bitmap.height, maxX = 0, maxY = 0;
 
     // Scan for bright pixels to find the brain.
-    // We scan up to 534 pixels to capture the full brain but strictly avoid the top of the MNEMIX text.
-    image.scan(0, 0, image.bitmap.width, 534, function (x, y, idx) {
+    // Based on measurement, the halo tip ends at y=467 and THE TEXT starts at y=492.
+    // We scan to 480 to safely capture the halo without catching the text.
+    image.scan(0, 0, image.bitmap.width, 480, function (x, y, idx) {
         const r = this.bitmap.data[idx + 0];
         const g = this.bitmap.data[idx + 1];
         const b = this.bitmap.data[idx + 2];
@@ -21,14 +22,14 @@ async function processIcon() {
     });
 
     // Add padding to ensure the soft glow isn't clipped.
-    // NOTE: We do NOT pad maxY beyond 534 to avoid catching the text stems.
+    // NOTE: We do NOT pad maxY beyond 485.
     const padding = 20;
     minX = Math.max(0, minX - padding);
     minY = Math.max(0, minY - padding);
     maxX = Math.min(image.bitmap.width - 1, maxX + padding);
-    maxY = Math.min(534, maxY + padding);
+    maxY = Math.min(485, maxY + padding);
 
-    console.log("Brain bounds with surgical padding:", minX, minY, maxX, maxY);
+    console.log("Brain bounds with exact gap padding:", minX, minY, maxX, maxY);
 
     if (maxX >= minX && maxY >= minY) {
         const width = maxX - minX + 1;
@@ -49,8 +50,8 @@ async function processIcon() {
         if (cropY + finalSize > image.bitmap.height) finalSize = Math.min(finalSize, image.bitmap.height - cropY);
 
         image.scan(0, 0, image.bitmap.width, image.bitmap.height, function (x, y, idx) {
-            if (x < cropX || x >= cropX + finalSize || y < cropY || y >= cropY + finalSize || y >= 535) {
-                // Completely erase outside or if y is in the text area (using 535 as a surgical cutoff)
+            if (x < cropX || x >= cropX + finalSize || y < cropY || y >= cropY + finalSize || y >= 486) {
+                // Completely erase outside or if y is in the text area (using 486 as a hard surgical cutoff)
                 this.bitmap.data[idx + 0] = 0;
                 this.bitmap.data[idx + 1] = 0;
                 this.bitmap.data[idx + 2] = 0;
