@@ -6,7 +6,6 @@ export default withMermaid(defineConfig({
     title: "Mnemix",
     description: "The Memory Engine for AI Agents",
     srcDir: './src',
-    outDir: './dist',
     cleanUrls: true,
     appearance: 'dark', // Default to dark mode
     head: [
