@@ -16,7 +16,7 @@ export default function Header() {
             <Github size={20} />
             <span style={styles.linkText}>GitHub</span>
           </a>
-          <a href="#docs" className="btn btn-secondary" style={styles.btnSecondary}>
+          <a href="https://docs.mnemix.org/" target="_blank" rel="noreferrer" className="btn btn-secondary" style={styles.btnSecondary}>
             <BookOpen size={18} />
             Docs
           </a>
