@@ -3,7 +3,7 @@ import { withMermaid } from 'vitepress-plugin-mermaid'
 
 // https://vitepress.dev/reference/site-config
 export default withMermaid(defineConfig({
-    title: "Mnemix",
+    title: "MNEMIXS",
     description: "The Memory Engine for AI Agents",
     srcDir: './src',
     cleanUrls: true,
@@ -16,7 +16,7 @@ export default withMermaid(defineConfig({
         // https://vitepress.dev/reference/default-theme-config
         logo: '/icon.png',
 
-        siteTitle: 'Mnemix',
+        siteTitle: 'MNEMIXS',
 
         search: {
             provider: 'local'

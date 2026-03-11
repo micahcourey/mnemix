@@ -1,6 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+
 /**
  * Customized VitePress CSS variables for the Mnemix theme
  */
+
+.VPNavBarTitle.has-type .title {
+    font-family: 'Orbitron', sans-serif !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    text-shadow: 0 0 10px rgba(20, 184, 166, 0.3) !important;
+}
 
 :root {
     --vp-c-brand-1: #14b8a6;

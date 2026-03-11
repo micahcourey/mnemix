@@ -1,15 +1,18 @@
-import { Github, BookOpen, Menu } from 'lucide-react';
+import { useState } from 'react';
+import { Github, BookOpen, Menu, X } from 'lucide-react';
 
 export default function Header() {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
   return (
     <header className="header" style={styles.header}>
       <div className="container" style={styles.container}>
         <div style={styles.logoGroup}>
-          <img src="/icon.png" alt="Mnemix Logo" style={styles.logoImage} />
-          <span style={styles.logoText}>Mnemix</span>
+          <img src="/icon.png?v=2" alt="Mnemix Logo" style={styles.logoImage} />
+          <span style={styles.logoText}>MNEMIXS</span>
         </div>
 
-        <nav style={styles.nav}>
+        <nav className="desktop-nav" style={styles.nav}>
           <a href="#features" style={styles.link}>Features</a>
           <a href="#how-it-works" style={styles.link}>How it Works</a>
           <a href="https://github.com/micahcourey/mnemix" target="_blank" rel="noreferrer" style={styles.iconLink}>
@@ -22,10 +25,28 @@ export default function Header() {
           </a>
         </nav>
 
-        <button style={styles.mobileMenuBtn}>
-          <Menu size={24} />
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        >
+          {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
         </button>
       </div>
+
+      {isMobileMenuOpen && (
+        <div className="mobile-nav-panel">
+          <a href="#features" style={styles.link} onClick={() => setIsMobileMenuOpen(false)}>Features</a>
+          <a href="#how-it-works" style={styles.link} onClick={() => setIsMobileMenuOpen(false)}>How it Works</a>
+          <a href="https://github.com/micahcourey/mnemix" target="_blank" rel="noreferrer" style={styles.iconLink}>
+            <Github size={20} />
+            <span style={styles.linkText}>GitHub</span>
+          </a>
+          <a href="https://docs.mnemix.org/" target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ ...styles.btnSecondary, width: 'fit-content' }}>
+            <BookOpen size={18} />
+            Docs
+          </a>
+        </div>
+      )}
     </header>
   );
 }
@@ -63,13 +84,15 @@ const styles = {
     objectFit: 'cover' as const,
   },
   logoText: {
+    fontFamily: 'var(--font-cyber)',
     fontSize: '1.25rem',
     fontWeight: 700,
-    letterSpacing: '-0.025em',
+    letterSpacing: '0.05em',
     color: '#fff',
+    textShadow: '0 0 10px rgba(20, 184, 166, 0.5)',
+    textTransform: 'uppercase' as const,
   },
   nav: {
-    display: 'flex',
     alignItems: 'center',
     gap: '2rem',
   },
@@ -93,12 +116,5 @@ const styles = {
     padding: '0.5rem 1rem',
     fontSize: '0.9rem',
     gap: '0.4rem',
-  },
-  mobileMenuBtn: {
-    display: 'none', // Will show in media queries via global CSS if needed, but keeping inline minimal for now.
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--color-text-base)',
-    cursor: 'pointer',
   }
 };
