@@ -36,8 +36,8 @@ htmlcov/
 node_modules/
 dist/
 dist-ssr/
-.vitepress/dist/
-.vitepress/cache/
+**/.vitepress/dist/
+**/.vitepress/cache/
 *.local
 npm-debug.log*
 yarn-debug.log*
