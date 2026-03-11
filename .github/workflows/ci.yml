@@ -43,3 +43,36 @@ jobs:
 
       - name: Run cargo-deny
         run: cargo deny check
+
+  bundled-wheel-linux:
+    name: Bundled wheel smoke test (linux-x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "27.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build CLI release binary
+        run: cargo build --release -p mnemix-cli
+
+      - name: Build and verify bundled wheel
+        env:
+          PYTHON_BIN: python
+          TP_CLI_BINARY: target/release/mnemix
+        run: ./scripts/check-python-bundled-wheel.sh

@@ -127,6 +127,8 @@ main branch
 2. Bump the version in `python/mnemix/_version.py` and `Cargo.toml`.
 3. Update any release-facing docs that depend on the current release procedure or version.
 4. Run `./scripts/check-python-package.sh`.
+  Shortcut:
+  `./scripts/release.sh X.Y.Z` automates the standard path when the only required release edits are the version bumps in `Cargo.toml` and `python/mnemix/_version.py`.
 5. Merge the release-prep PR to `main`.
   Commands:
   `git checkout main`
