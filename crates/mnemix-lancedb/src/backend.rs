@@ -1138,7 +1138,7 @@ impl HistoryBackend for LanceDbBackend {
             });
         }
 
-        let versions = self.block_on(self.memories.list_versions())?;
+        let versions: Vec<_> = self.block_on(self.memories.list_versions())?;
         let checkpoint_map: HashMap<u64, Vec<Checkpoint>> = self
             .list_checkpoints()?
             .into_iter()
@@ -1174,7 +1174,7 @@ impl HistoryBackend for LanceDbBackend {
             })
             .collect();
 
-        records.sort_by_key(|record| std::cmp::Reverse(record.version().value()));
+        records.sort_by_key(|record: &VersionRecord| std::cmp::Reverse(record.version().value()));
         records.truncate(usize::from(query.limit().value()));
         Ok(records)
     }
@@ -1221,8 +1221,9 @@ impl AdvancedStorageBackend for LanceDbBackend {
             .map_or(dataset.manifest.version, VersionNumber::value);
 
         self.block_on_lance(dataset.create_branch(request.name().as_str(), base_version, None))?;
-        let contents = self
-            .block_on_lance(dataset.list_branches())?
+        let mut all_branches: HashMap<String, BranchContents> =
+            self.block_on_lance(dataset.list_branches())?;
+        let contents = all_branches
             .remove(request.name().as_str())
             .ok_or_else(|| LanceDbError::BranchNotFound {
                 name: request.name().as_str().to_owned(),
@@ -1234,8 +1235,9 @@ impl AdvancedStorageBackend for LanceDbBackend {
     fn list_branches(&self) -> Result<BranchListResult, Self::Error> {
         let memories_uri = self.table_uri(&self.memories)?;
         let dataset = self.load_lance_dataset(&memories_uri)?;
-        let mut branches = self
-            .block_on_lance(dataset.list_branches())?
+        let all_branches: HashMap<String, BranchContents> =
+            self.block_on_lance(dataset.list_branches())?;
+        let mut branches = all_branches
             .into_iter()
             .map(|(name, contents)| Self::branch_record_from_contents(name, &contents))
             .collect::<Result<Vec<_>, _>>()?;
