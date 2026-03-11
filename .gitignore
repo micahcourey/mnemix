@@ -31,3 +31,14 @@ htmlcov/
 
 # Dex is intentionally committed for shared task tracking.
 !.dex/
+
+# Website & Docs
+node_modules/
+dist/
+dist-ssr/
+.vitepress/dist/
+.vitepress/cache/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

@@ -1,5 +1,8 @@
 name: Publish Python
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   release:
     types: [published]
@@ -114,7 +117,7 @@ jobs:
     needs:
       - build-sdist
       - build-bundled-wheels
-    if: github.event_name == 'release'
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
