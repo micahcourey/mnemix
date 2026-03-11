@@ -8,8 +8,8 @@ export default function Header() {
     <header className="header" style={styles.header}>
       <div className="container" style={styles.container}>
         <div style={styles.logoGroup}>
-          <img src="/icon.png" alt="Mnemix Logo" style={styles.logoImage} />
-          <span style={styles.logoText}>Mnemix</span>
+          <img src="/icon.png?v=2" alt="Mnemix Logo" style={styles.logoImage} />
+          <span style={styles.logoText}>MNEMIXS</span>
         </div>
 
         <nav className="desktop-nav" style={styles.nav}>
@@ -84,10 +84,13 @@ const styles = {
     objectFit: 'cover' as const,
   },
   logoText: {
+    fontFamily: 'var(--font-cyber)',
     fontSize: '1.25rem',
     fontWeight: 700,
-    letterSpacing: '-0.025em',
+    letterSpacing: '0.05em',
     color: '#fff',
+    textShadow: '0 0 10px rgba(20, 184, 166, 0.5)',
+    textTransform: 'uppercase' as const,
   },
   nav: {
     alignItems: 'center',
