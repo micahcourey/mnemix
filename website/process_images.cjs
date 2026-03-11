@@ -5,13 +5,12 @@ async function processIcon() {
 
     // We want to isolate the brain/halo. It is prominently cyan/blue, so it has high G and B values.
     // The background grid is dark grey. The text "M N E M I X" is also cyan but it is at the bottom.
-    // Let's find the bounding box of the brain by finding "bright cyan" pixels in the top 80% of the image.
 
     let minX = image.bitmap.width, minY = image.bitmap.height, maxX = 0, maxY = 0;
 
     // Scan for bright pixels to find the brain.
-    // We scan up to 520 pixels to capture the full brain but still avoid the MNEMIX text (starts at ~538).
-    image.scan(0, 0, image.bitmap.width, 520, function (x, y, idx) {
+    // We scan up to 537 pixels to capture the full brain but strictly avoid the MNEMIX text (starts at 538).
+    image.scan(0, 0, image.bitmap.width, 537, function (x, y, idx) {
         const r = this.bitmap.data[idx + 0];
         const g = this.bitmap.data[idx + 1];
         const b = this.bitmap.data[idx + 2];
@@ -25,12 +24,13 @@ async function processIcon() {
         }
     });
 
-    // Add a small amount of padding to ensure the soft glow isn't clipped
-    const padding = 10;
+    // Add padding to ensure the soft glow isn't clipped.
+    // NOTE: We do NOT pad maxY beyond 537 to avoid catching the text.
+    const padding = 20;
     minX = Math.max(0, minX - padding);
     minY = Math.max(0, minY - padding);
     maxX = Math.min(image.bitmap.width - 1, maxX + padding);
-    maxY = Math.min(image.bitmap.height - 1, maxY + padding);
+    maxY = Math.min(537, maxY + padding);
 
     console.log("Brain bounds with padding:", minX, minY, maxX, maxY);
 
@@ -56,10 +56,9 @@ async function processIcon() {
         console.log("Square crop box:", cropX, cropY, finalSize, finalSize);
 
         // Now we wipe EVERYTHING outside this box, AND we apply aggressive alpha transparency to the INSIDE of the box.
-        // We want to remove the faint dark grid. The grid has rgb values around 15-30.
         image.scan(0, 0, image.bitmap.width, image.bitmap.height, function (x, y, idx) {
-            if (x < cropX || x >= cropX + finalSize || y < cropY || y >= cropY + finalSize) {
-                // Completely erase outside the box (kills the text and outer grid)
+            if (x < cropX || x >= cropX + finalSize || y < cropY || y >= cropY + finalSize || y >= 538) {
+                // Completely erase outside the box or if y is in the text area
                 this.bitmap.data[idx + 0] = 0;
                 this.bitmap.data[idx + 1] = 0;
                 this.bitmap.data[idx + 2] = 0;
@@ -72,17 +71,12 @@ async function processIcon() {
                 let a = Math.max(r, g, b);
 
                 // If the pixel is dark enough (i.e. background grid), make it 100% transparent.
-                // The grid seems to max out around 30-40. Let's use 50 to be incredibly safe.
                 if (a < 50) {
                     this.bitmap.data[idx + 3] = 0;
                 } else {
-                    // For the glowing brain lines, we leave them fully opaque, but we could also scale their alpha
-                    // to give soft anti-aliased edges.
-                    // Scale alpha up so the bright parts stay completely opaque.
                     let newA = Math.min(255, (a - 50) * 2);
                     this.bitmap.data[idx + 3] = newA;
 
-                    // Un-premultiply RGB if we are applying partial transparency
                     if (newA > 0 && newA < 255) {
                         this.bitmap.data[idx + 0] = Math.min(255, (r * 255) / newA);
                         this.bitmap.data[idx + 1] = Math.min(255, (g * 255) / newA);
