@@ -849,9 +849,11 @@ impl LanceDbBackend {
                 .await?;
 
             while let Some(batch) = stream.try_next().await? {
-                let Some(array) = batch
+                let Some(array): Option<&StringArray> = batch
                     .column_by_name(PAYLOAD_COLUMN)
-                    .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+                    .and_then(|column: &Arc<dyn Array>| {
+                        column.as_any().downcast_ref::<StringArray>()
+                    })
                 else {
                     return Err(LanceDbError::InvalidData {
                         field: PAYLOAD_COLUMN,
@@ -903,12 +905,15 @@ impl LanceDbBackend {
                 query = query.limit(limit);
             }
 
-            query.execute().await?.try_collect::<Vec<_>>().await
+            let batches: Vec<RecordBatch> = query.execute().await?.try_collect().await?;
+            Ok::<Vec<RecordBatch>, lancedb::Error>(batches)
         })?;
 
         let mut payloads = Vec::new();
         for batch in batches {
-            let Some(array) = batch.column(0).as_any().downcast_ref::<StringArray>() else {
+            let Some(array): Option<&StringArray> =
+                batch.column(0).as_any().downcast_ref::<StringArray>()
+            else {
                 return Err(LanceDbError::InvalidData {
                     field: PAYLOAD_COLUMN,
                     details: "expected Utf8 payload column".to_owned(),
@@ -1188,7 +1193,7 @@ impl RestoreBackend for LanceDbBackend {
 
 impl CheckpointBackend for LanceDbBackend {
     fn checkpoint(&mut self, request: &CheckpointRequest) -> Result<Checkpoint, Self::Error> {
-        let version = self.block_on(self.memories.version())?;
+        let version: u64 = self.block_on(self.memories.version())?;
         self.create_checkpoint_at_version(
             request.name(),
             version,
