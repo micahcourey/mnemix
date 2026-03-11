@@ -1,0 +1,29 @@
+/**
+ * Customized VitePress CSS variables for the Mnemix theme
+ */
+
+:root {
+    --vp-c-brand-1: #14b8a6;
+    /* Teal */
+    --vp-c-brand-2: #0d9488;
+    --vp-c-brand-3: #0f766e;
+    --vp-c-brand-soft: rgba(20, 184, 166, 0.14);
+
+    --vp-home-hero-name-color: transparent;
+    --vp-home-hero-name-background: linear-gradient(135deg, var(--vp-c-brand-1) 0%, #3b82f6 100%);
+
+    --vp-home-hero-image-background-image: linear-gradient(-45deg, var(--vp-c-brand-1) 30%, #3b82f6 70%);
+    --vp-home-hero-image-filter: blur(40px);
+}
+
+.VPImage.image-bg {
+    opacity: 0.3 !important;
+}
+
+.VPHero.has-image .image-src {
+    max-width: 320px;
+    max-height: 320px;
+    margin: 0 auto;
+    border-radius: 50%;
+    box-shadow: 0 0 80px rgba(20, 184, 166, 0.4);
+}

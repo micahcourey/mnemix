@@ -1,16 +1,21 @@
 name: Docs
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   push:
     branches: [main]
     paths:
       - "docs/**"
+      - "docs_site/**"
       - "README.md"
       - "CHANGELOG.md"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs/**"
+      - "docs_site/**"
       - "README.md"
       - "CHANGELOG.md"
       - ".github/workflows/docs.yml"
@@ -25,6 +30,6 @@ jobs:
       - name: Ensure key planning docs exist
         run: |
           test -f docs/mnemix-plan-v3.md
-          test -f docs/mnemix-roadmap.md
+          test -f docs_site/src/architecture/mnemix-roadmap.md
           test -f docs/lancedb-rust-sdk-agent-guide.md
           test -f docs/repo-scaffold-spec.md

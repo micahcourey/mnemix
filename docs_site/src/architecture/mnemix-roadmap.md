@@ -9,9 +9,8 @@ This roadmap turns the canonical plan into an implementation sequence, repo scaf
 
 This roadmap is derived from:
 
-- [docs/mnemix-plan-v3.md](mnemix-plan-v3.md)
-- [docs/lancedb-rust-sdk-agent-guide.md](lancedb-rust-sdk-agent-guide.md)
-- [docs/mnemix-coding-guidelines.md](mnemix-coding-guidelines.md)
+- See the [engineering plan](./mnemix-plan-v3.md) for deeper architecture rules.
+- Agent prompt guidelines and reference implementations ([Rust agent guide](../guide/lancedb-rust-sdk-agent-guide.md))
 
 ### Architecture guardrails from the Lance guide
 
