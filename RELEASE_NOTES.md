@@ -1,6 +1,6 @@
 # Production Readiness Review (PRR)
 
-Mnemix `v0.2.1` is the release-recovery follow-up to the initial `v0.2.0` rebrand publish attempt. This patch release keeps the public Mnemix surfaces introduced in `v0.2.0`, adds the missing `protoc` setup required by the tag-triggered release workflow, and carries forward the reusable release documentation needed for ongoing publishes.
+Mnemix `v0.2.1` is the first public release under the Mnemix name. This release carries forward the existing local-first memory engine, Python binding, bundled-wheel packaging, and advanced storage workflows, while updating the public package, CLI, crate, and documentation surfaces to the Mnemix brand. Deployment is handled through the existing GitHub Release to PyPI trusted-publishing workflow.
 
 ---
 
@@ -9,10 +9,10 @@ Mnemix `v0.2.1` is the release-recovery follow-up to the initial `v0.2.0` rebran
 | Field | Value |
 |-------|-------|
 | **Release Date** | 2026-03-10 |
-| **Release Window** | TBD |
+| **Release Window** | 21:54 UTC |
 | **Version** | `v0.2.1` |
-| **Release Type** | Patch |
-| **Release Epic** | Release recovery |
+| **Release Type** | Minor |
+| **Release Epic** | `#28` |
 
 ## Release Scope
 
@@ -21,8 +21,8 @@ This release retries the first successful PyPI publish under the `mnemix` name a
 | Ticket | Summary | Status |
 |--------|---------|--------|
 | `#26` | Rebrand Temporal Plane to Mnemix across public surfaces | Done |
-| `#28` | Prepare the Mnemix release process and version alignment | Done |
-| `#30` | Restore `protoc` setup in the release workflow and ship release docs | Done |
+| `#24` | Bundle CLI in platform-specific PyPI wheels | Done |
+| `#28` | Prepare v0.2.1 release checklist and version bump | Done |
 
 ## Stakeholders Approval & Notifications
 
@@ -79,7 +79,7 @@ Release verification combines automated package validation with local release-pr
 - [x] Smoke tests passing
 - [x] Monitoring and alerts active
 - [x] Rollback plan documented
-- [ ] GitHub Release published from tag `v0.2.1`
+- [x] GitHub Release published from tag `v0.2.1`
 
 ## Production Post-Deployment Verification
 
@@ -92,7 +92,7 @@ Release verification combines automated package validation with local release-pr
 
 ## Release Statistics
 
-GitHub release: pending `v0.2.1`
+GitHub release: https://github.com/micahcourey/mnemix/releases/tag/v0.2.1
 
 | Metric | Value |
 |--------|-------|
@@ -103,7 +103,7 @@ GitHub release: pending `v0.2.1`
 
 ## Notes & Miscellaneous Items
 
-When `v0.2.1` is published from `main`, update the release body in place with:
+The live release exists at `v0.2.1` and targets `main`. If the release notes need to be updated after publication, edit the release body in place with:
 
 ```bash
 gh release edit v0.2.1 --notes-file RELEASE_NOTES.md
