@@ -1,63 +1,64 @@
 # Mnemix Versioning and Restore
 
-**Status:** draft implementation guidance
+Version history is a core part of the Mnemix product model, not a hidden storage detail. Every write creates a new version, which means memory changes remain inspectable over time.
 
-## Core semantics
+## Core concepts
 
-- `history` and `versions` are inspection tools.
-- `checkpoint` creates a stable named reference to the current memories-table version.
-- `checkout` is an internal storage operation for viewing historical state.
-- `restore` creates a new current head version from a historical version or checkpoint.
+- `history` and `versions` let you inspect past store states
+- `checkpoint` creates a stable named reference to the current version
+- `restore` creates a new current head from a historical checkpoint or version
 
-Mnemix treats that final distinction as product-critical:
+The important behavior is that restore does not erase the past. It produces a new head while leaving prior versions available for inspection.
 
-- `checkout` does not redefine current history semantics.
-- `restore` does create a new current state and leaves prior versions inspectable.
+## Restore targets
 
-Restore is not a single atomic storage transaction. Mnemix resolves the target, performs the restore, and then refreshes the latest table handle so normal reads continue against the new head.
-
-## User-facing restore contract
-
-Restore accepts either:
+You can restore from:
 
 - a checkpoint name
 - a raw version number
 
-Before restore runs, the conservative default policy creates an automatic pre-restore checkpoint for the current head when that head is not already checkpointed.
+Examples:
 
-Restore results report:
+```bash
+mnemix --store .mnemix restore --checkpoint before-refactor
+```
+
+```bash
+mnemix --store .mnemix restore --version 12
+```
+
+## What restore returns
+
+A restore operation reports:
 
 - the previous current version
-- the historical version that was restored
-- the new current head version created by the restore
-- any automatic pre-restore checkpoint that was created
+- the historical version that was selected
+- the new current version created by the restore
+- any automatic pre-restore checkpoint created for safety
 
-## Checkpoints and tags
-
-Mnemix implements checkpoints on top of Lance tags for the memories table.
-
-That means checkpoints are:
-
-- human-readable
-- stable references to historical state
-- part of retention safety rules
-
-Checkpoint metadata is also persisted in the dedicated checkpoints table so CLI and adapter surfaces can render descriptions consistently.
+This makes the operation auditable from both human and programmatic interfaces.
 
 ## Safety defaults
 
-- restore auto-creates a pre-restore checkpoint by default
-- optimize auto-creates a pre-optimize checkpoint by default
-- prune behavior is opt-in
-- tagged historical versions are protected from routine cleanup
+Mnemix uses conservative defaults around history-changing operations:
 
-## CLI guidance
+- restore automatically creates a pre-restore checkpoint when appropriate
+- optimize automatically creates a pre-optimize checkpoint when appropriate
+- pruning old versions is opt-in
+- named checkpoints remain protected from routine cleanup
 
-Use `history` or `versions` before destructive operations.
+These defaults are designed to make recovery straightforward even when a user is experimenting or cleaning up a store.
 
-Recommended flow:
+## Recommended workflow
 
-1. inspect versions
-2. create an explicit checkpoint for a user-meaningful milestone when needed
-3. run restore or optimize
-4. inspect the new head version after the operation
+Before a risky change:
+
+1. inspect the current state with `versions` or `history`
+2. create a checkpoint if the current state is worth naming
+3. run `restore` or `optimize`
+4. inspect the resulting new head
+
+## Related pages
+
+- [Checkpoint & Retention Policy](/guide/checkpoint-and-retention-policy)
+- [CLI](/guide/cli)
