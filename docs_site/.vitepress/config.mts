@@ -7,7 +7,7 @@ export default withMermaid(defineConfig({
     description: "The Memory Engine for AI Agents",
     srcDir: './src',
     cleanUrls: true,
-    appearance: 'dark', // Default to dark mode
+    appearance: 'dark',
     head: [
         ['link', { rel: 'icon', href: '/icon.png' }]
     ],
@@ -31,29 +31,30 @@ export default withMermaid(defineConfig({
         sidebar: {
             '/guide/': [
                 {
-                    text: 'Getting Started',
+                    text: 'Guide',
                     items: [
-                        { text: 'Introduction', link: '/guide/' },
-                        { text: 'Python Client SDK', link: '/guide/python' },
-                        { text: 'LanceDB Rust SDK Agent Guide', link: '/guide/lancedb-rust-sdk-agent-guide' }
+                        { text: 'Overview', link: '/guide/' },
+                        { text: 'CLI', link: '/guide/cli' },
+                        { text: 'Python', link: '/guide/python' },
+                        { text: 'Storage Foundation', link: '/guide/lancedb' }
                     ]
                 },
                 {
                     text: 'Core Concepts',
                     items: [
-                        { text: 'Memory Scope & Types', link: '/guide/memory-model' },
+                        { text: 'Memory Model', link: '/guide/memory-model' },
                         { text: 'Versioning & Restore', link: '/guide/versioning-and-restore' },
-                        { text: 'Branch Lifecycle', link: '/guide/branch-lifecycle' },
                         { text: 'Checkpoint & Retention Policy', link: '/guide/checkpoint-and-retention-policy' },
+                        { text: 'Import Staging & Branches', link: '/guide/branch-lifecycle' }
                     ]
                 }
             ],
             '/architecture/': [
                 {
-                    text: 'Internals',
+                    text: 'Architecture',
                     items: [
-                        { text: 'Architecture & Plan', link: '/architecture/mnemix-plan-v3' },
-                        { text: 'Roadmap', link: '/architecture/mnemix-roadmap' }
+                        { text: 'Overview', link: '/architecture/mnemix-plan-v3' },
+                        { text: 'Status & Roadmap', link: '/architecture/mnemix-roadmap' }
                     ]
                 }
             ]

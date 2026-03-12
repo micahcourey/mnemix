@@ -1,79 +1,66 @@
 # Architecture Overview
 
-Mnemix is a standalone, local-first memory layer for AI coding agents and related tooling. It is designed to be lightweight, serverless for local usage, easy to embed, and optimized for episodic and distilled memory with version-aware, time-travel capabilities.
+Mnemix is a local-first memory system for agents. The architecture is designed around a simple public model:
 
-## Core Principles
+- write structured memories
+- retrieve only the most useful context first
+- keep history inspectable and recoverable
 
-### Distilled over raw
-Mnemix primarily stores durable, useful memories, not unbounded raw transcripts.
+## Design principles
+
+### Structured over raw
+
+Mnemix stores typed memory records rather than treating every transcript fragment as equal.
 
 ### Local-first
-Local embedded usage is the default, ensuring data privacy and fast local access. This is provided by Arrow-native storage without requiring heavy daemon processes.
 
-### Human-inspectable
-Users can easily see what is stored, when it was stored, why it matched, whether it is pinned, and what changed over time.
+The default deployment model is a local store on the filesystem. This keeps setup small and inspection easy.
 
-### Progressive Disclosure
-Only the most relevant, compact memory is loaded by default. Deeper context is fetched on demand to optimize token usage and keep the context window clean. 
+### Inspectable by default
 
-### Safe by Default
-Memory state over time is a core product feature. Retention, restore, cleanup, and optimization must preserve recoverability unless explicitly requested otherwise.
+Users should be able to understand what is stored, why it matched, and how the store changed over time.
 
----
+### Progressive disclosure
 
-## Storage Foundation
+Recall should return the smallest high-value context first, with deeper history available on demand.
 
-Mnemix uses **LanceDB** + **Lance** as its storage foundation.
-- **LanceDB**: Handles normal database and table workflows, providing FTS (Full-Text Search) and indexing.
-- **Lance**: Provides lower-level version-control, dataset workflows, zero-copy rollbacks, and tags/checkpoints.
+### Recoverable by default
 
-This tech stack enables local embedded operation, filesystem-backed persistence, and built-in versions and checkpoints.
+Version history, checkpoints, and conservative retention rules are part of the product contract.
 
----
+## High-level components
 
-## Memory Model
+| Component | Responsibility |
+|---|---|
+| Memory model | Defines the structure of stored records and recall layers |
+| Storage layer | Persists records, indexes content, and manages version-aware state |
+| CLI | Provides terminal workflows and machine-readable JSON output |
+| Python client | Wraps the CLI contract for agent and script integrations |
 
-Mnemix stores structured memory objects rather than unstructured transcript logs.
+## Request flow
 
-### Primary Memory Categories:
-- `episodic` — notable events, actions, outcomes
-- `semantic` — generalized facts or stable project knowledge
-- `preference` — user or agent preferences
-- `procedural` — workflows, commands, playbooks, heuristics
-- `summary` — distilled rollups of sessions/scopes
-- `pinned` — explicitly elevated always-available context
+```mermaid
+flowchart LR
+    A["Agent or User"] --> B["CLI or Python Client"]
+    B --> C["Mnemix memory model and command layer"]
+    C --> D["Local storage engine"]
+    D --> C
+    C --> B
+    B --> A
+```
 
----
+## Retrieval flow
 
-## Memory Scopes and Layers
+The retrieval model combines scope, text matching, and ranking signals to return results in layers:
 
-Mnemix supports explicit scoped memory boundaries (e.g., workspace, repository, user profile, session). Memory is inherently structured into retrieval layers:
+- pinned context
+- summaries
+- archival results
 
-1. **Pinned context**: Always small, highly relevant signal, loaded first.
-2. **Working memory summaries**: Compact rollups of recent high-value context.
-3. **Archival memory**: Broader historical memory corpus, retrieved safely on demand through lexical or filtering search.
+This keeps normal agent startup lightweight while preserving access to the full store when needed.
 
----
+## History model
 
-## Retrieval Model
+Every write advances the store history. Named checkpoints provide stable references to meaningful states, and restore creates a new current head from an earlier point without deleting the path that led there.
 
-Retrieval in Mnemix is text-first, practical, and relies on metadata filtering and scoring layers to prioritize relevance, recency, and explicit `pinned` properties.
-Retrieval prioritizes explainability—exposing why an item was surfaced to the agent.
-
----
-
-## Versioning and Time-Travel
-
-Mnemix makes it easy to inspect memory history and safely return to prior states.
-- **Versions**: Concrete table state revisions.
-- **Checkpoints**: User-meaningful named references to specific states.
-- **Checkout/Restore**: View a prior state or create a new current state safely from a past checkpoint without destroying history.
-
----
-
-## High-Level Architecture Components
-
-1. **Core Domain Engine (Rust)**: Handles the memory model, retrieval semantics, pinning algorithms, and checkpoint abstractions safely and efficiently.
-2. **Storage Backend**: Manages LanceDB operations, index lifecycle, and optimization helpers.
-3. **CLI**: Supports human-facing workflows, JSON-machinereadable outputs, and inspection operations.
-4. **Bindings (Python)**: Wraps the core engine into native modules for easy adoption by Python-based AI agents and workflows.
+That history model is what allows Mnemix to treat memory as durable state rather than temporary session data.
