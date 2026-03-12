@@ -48,6 +48,8 @@ jobs:
   bundled-wheel-linux:
     name: Bundled wheel smoke test (linux-x86_64)
     runs-on: ubuntu-22.04
+    env:
+      CARGO_TARGET_DIR: /tmp/mnemix-ci-linux-release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,14 +70,11 @@ jobs:
           version: "27.3"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
-
       - name: Build CLI release binary
         run: cargo build --release -p mnemix-cli
 
       - name: Build and verify bundled wheel
         env:
           PYTHON_BIN: python
-          TP_CLI_BINARY: target/release/mnemix
+          TP_CLI_BINARY: /tmp/mnemix-ci-linux-release/release/mnemix
         run: ./scripts/check-python-bundled-wheel.sh

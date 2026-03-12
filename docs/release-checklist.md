@@ -46,6 +46,7 @@ main branch
 |-------|-------------------|----------|-----------|
 | Version alignment | Compare `Cargo.toml` and `python/mnemix/_version.py` | Same version string | Every release |
 | Local preflight | `./scripts/check-python-package.sh` | Exit code `0` | Every release |
+| Local Linux release build | `./scripts/check-linux-release-build.sh` | Exit code `0` | Before tagging |
 | Release workflow | GitHub Actions `Publish Python` | All jobs succeed | Every release |
 | Package availability | `python3 -m pip index versions mnemix` | New version listed | Every release |
 
@@ -61,7 +62,7 @@ main branch
 
 | Alert | Severity | Threshold | Action |
 |-------|----------|-----------|--------|
-| Preflight failure | P1 | Any non-zero exit from `./scripts/check-python-package.sh` | Stop release and fix before tagging |
+| Preflight failure | P1 | Any non-zero exit from `./scripts/check-python-package.sh` or `./scripts/check-linux-release-build.sh` | Stop release and fix before tagging |
 | Publish workflow failure | P1 | Any failed job in `Publish Python` after a release is published | Inspect logs and rerun only after root cause is fixed |
 | Version mismatch | P1 | GitHub tag, Cargo version, and Python version do not match | Correct versions and cut a new release |
 | Missing PyPI package update | P1 | New version absent from PyPI after successful workflow | Verify trusted publishing and package artifacts |
@@ -127,17 +128,20 @@ main branch
 2. Bump the version in `python/mnemix/_version.py` and `Cargo.toml`.
 3. Update any release-facing docs that depend on the current release procedure or version.
 4. Run `./scripts/check-python-package.sh`.
+5. Run `./scripts/check-linux-release-build.sh`.
   Shortcut:
   `./scripts/release.sh X.Y.Z` automates the release-prep PR path when the only required release edits are the version bumps in `Cargo.toml` and `python/mnemix/_version.py`.
-5. Merge the release-prep PR to `main`.
+6. Merge the release-prep PR to `main`.
   Commands:
   `git checkout main`
   `git pull --ff-only origin main`
-6. Create and publish a GitHub Release tagged `vX.Y.Z` from the verified `main` commit.
+7. Create and publish a GitHub Release tagged `vX.Y.Z` from the verified `main` commit.
   Commands:
   `./scripts/publish-release.sh X.Y.Z`
-7. Wait for `.github/workflows/publish-python.yml` to complete successfully.
-8. Verify the new version on PyPI and in a clean install.
+  Note:
+  `./scripts/publish-release.sh X.Y.Z` now runs `./scripts/check-linux-release-build.sh` before creating the tag.
+8. Wait for `.github/workflows/publish-python.yml` to complete successfully.
+9. Verify the new version on PyPI and in a clean install.
 
 ### Rollback
 
@@ -150,7 +154,7 @@ main branch
 
 1. Limit emergency releases to packaging or publish-blocking fixes.
 2. Keep the diff minimal and directly tied to the failed release.
-3. Re-run `./scripts/check-python-package.sh` before publishing the emergency fix.
+3. Re-run `./scripts/check-python-package.sh` and `./scripts/check-linux-release-build.sh` before publishing the emergency fix.
 4. Publish a new GitHub Release with the next version.
   Commands:
   `git checkout main`

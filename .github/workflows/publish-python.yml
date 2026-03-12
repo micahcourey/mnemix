@@ -68,13 +68,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             label: linux-x86_64
-            cli_binary: target/release/mnemix
+            cli_binary: /tmp/mnemix-publish-linux-release/release/mnemix
+            cargo_target_dir: /tmp/mnemix-publish-linux-release
           - os: macos-latest
             label: macos-arm64
             cli_binary: target/release/mnemix
+            cargo_target_dir: target
           - os: windows-latest
             label: windows-x86_64
             cli_binary: target/release/mnemix.exe
+            cargo_target_dir: target
 
     steps:
       - uses: actions/checkout@v4
@@ -96,14 +99,18 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cache cargo artifacts
+        if: matrix.label != 'linux-x86_64'
         uses: Swatinem/rust-cache@v2
 
       - name: Build CLI release binary
+        env:
+          CARGO_TARGET_DIR: ${{ matrix.cargo_target_dir }}
         run: cargo build --release -p mnemix-cli
 
       - name: Build and verify bundled wheel
         shell: bash
         env:
+          CARGO_TARGET_DIR: ${{ matrix.cargo_target_dir }}
           PYTHON_BIN: python
           TP_CLI_BINARY: ${{ matrix.cli_binary }}
         run: ./scripts/check-python-bundled-wheel.sh

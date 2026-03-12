@@ -84,6 +84,7 @@ PY
 require_command git
 require_command gh
 require_command python3
+require_command docker
 
 current_branch="$(git branch --show-current)"
 if [[ "$current_branch" != "main" ]]; then
@@ -124,6 +125,7 @@ if [[ "$workspace_version" != "$version" || "$python_version" != "$version" ]]; 
   exit 1
 fi
 
+run ./scripts/check-linux-release-build.sh
 run git tag -a "$tag" -m "$tag"
 run git push origin "$tag"
 run gh release create "$tag" --title "$tag" --generate-notes
