@@ -16,8 +16,7 @@ use futures::TryStreamExt;
 use lance::dataset::{builder::DatasetBuilder as LanceDatasetBuilder, refs::BranchContents};
 use lance_index::scalar::FullTextSearchQuery;
 use lancedb::{
-    arrow::SendableRecordBatchStream,
-    Table, connect,
+    Table, arrow::SendableRecordBatchStream, connect,
     connection::Connection,
     index::{Index, IndexType, scalar::FtsIndexBuilder},
     query::{ExecutableQuery, QueryBase, Select},
@@ -907,9 +906,7 @@ impl LanceDbBackend {
                 query = query.limit(limit);
             }
 
-            let stream: SendableRecordBatchStream = query
-                .execute()
-                .await?;
+            let stream: SendableRecordBatchStream = query.execute().await?;
             let batches: Vec<RecordBatch> = stream.try_collect().await?;
             Ok::<Vec<RecordBatch>, lancedb::Error>(batches)
         })?;
