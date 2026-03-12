@@ -10,6 +10,10 @@ fn cli() -> Command {
     Command::cargo_bin("mnemix").expect("binary should build")
 }
 
+fn cli_alias() -> Command {
+    Command::cargo_bin("mx").expect("alias binary should build")
+}
+
 fn run_json_ok(store: &Path, args: &[&str]) -> Value {
     let assert = cli()
         .args(["--store", &store.display().to_string(), "--json"])
@@ -181,6 +185,11 @@ fn init_and_full_inspection_flow_outputs_stable_json() {
     assert_eq!(stats["data"]["stats"]["total_memories"], 1);
     assert_eq!(stats["data"]["stats"]["pinned_memories"], 1);
     assert_eq!(stats["data"]["stats"]["latest_checkpoint"], "milestone-3");
+}
+
+#[test]
+fn mx_alias_binary_supports_help() {
+    cli_alias().arg("--help").assert().success();
 }
 
 #[test]

@@ -916,8 +916,9 @@ impl LanceDbBackend {
         let mut payloads = Vec::new();
         for batch in batches {
             let batch: RecordBatch = batch;
+            let column: &Arc<dyn Array> = batch.column(0);
             let Some(array): Option<&StringArray> =
-                batch.column(0).as_any().downcast_ref::<StringArray>()
+                column.as_any().downcast_ref::<StringArray>()
             else {
                 return Err(LanceDbError::InvalidData {
                     field: PAYLOAD_COLUMN,

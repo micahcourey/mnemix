@@ -7,6 +7,7 @@ python_bin="${PYTHON_BIN:-$python_root/.venv/bin/python}"
 cli_binary="${MNEMIX_CLI_BINARY:-${TP_CLI_BINARY:-$repo_root/target/debug/mnemix}}"
 staging_dir="$python_root/mnemix/_bin"
 staged_binary="$staging_dir/mnemix"
+staged_alias_binary="$staging_dir/mx"
 build_venv="$python_root/.build-wheel-venv"
 
 resolve_python() {
@@ -43,11 +44,14 @@ fi
 
 if [[ "$cli_binary" == *.exe ]]; then
 	staged_binary="$staging_dir/mnemix.exe"
+	staged_alias_binary="$staging_dir/mx.exe"
 fi
 
 cleanup() {
 	rm -f "$python_root/mnemix/_bin/mnemix"
 	rm -f "$python_root/mnemix/_bin/mnemix.exe"
+	rm -f "$python_root/mnemix/_bin/mx"
+	rm -f "$python_root/mnemix/_bin/mx.exe"
 	rm -rf "$build_venv"
 	rmdir "$staging_dir" 2>/dev/null || true
 }
@@ -56,7 +60,9 @@ trap cleanup EXIT
 
 mkdir -p "$staging_dir"
 cp "$cli_binary" "$staged_binary"
+cp "$cli_binary" "$staged_alias_binary"
 chmod +x "$staged_binary" 2>/dev/null || true
+chmod +x "$staged_alias_binary" 2>/dev/null || true
 
 rm -rf "$build_venv"
 "$python_bin" -m venv "$build_venv"
