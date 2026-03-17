@@ -20,7 +20,7 @@ export default function Hero() {
                             Get Started <ArrowRight size={18} />
                         </a>
                         <a href="https://github.com/micahcourey/mnemix" target="_blank" rel="noreferrer" className="btn btn-secondary">
-                            GitHub <Github size={18} />
+                            <Github size={18} /> GitHub <ArrowRight size={18} />
                         </a>
                     </div>
                 </div>
