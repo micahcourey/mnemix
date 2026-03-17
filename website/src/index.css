@@ -207,6 +207,16 @@ a:hover {
     padding-left: 0;
     padding-top: 1.5rem;
   }
+
+  .detailed-feature-row {
+    flex-direction: column !important;
+    gap: 2rem !important;
+    text-align: center;
+  }
+
+  .detailed-feature-row>div {
+    align-items: center !important;
+  }
 }
 
 /* Animations */
