@@ -1,4 +1,4 @@
-import { ArrowRight, Terminal } from 'lucide-react';
+import { ArrowRight, Github } from 'lucide-react';
 
 export default function Hero() {
     return (
@@ -8,8 +8,7 @@ export default function Hero() {
                 {/* Left Column: Copy & Actions */}
                 <div className="animate-fade-in" style={styles.content}>
                     <h1 style={styles.headline}>
-                        The Local Memory Engine <br />
-                        for <span className="text-gradient">AI Agents</span>
+                        The Local Memory Engine for <span className="text-gradient">AI Agents</span>
                     </h1>
 
                     <p style={styles.subtext}>
@@ -17,18 +16,18 @@ export default function Hero() {
                     </p>
 
                     <div style={styles.actions}>
-                        <a href="#quickstart" className="btn btn-primary">
+                        <a href="https://docs.mnemix.org" target="_blank" rel="noreferrer" className="btn btn-primary">
                             Get Started <ArrowRight size={18} />
                         </a>
                         <a href="https://github.com/micahcourey/mnemix" target="_blank" rel="noreferrer" className="btn btn-secondary">
-                            <Terminal size={18} /> pip install mnemix
+                            <Github size={18} /> GitHub <ArrowRight size={18} />
                         </a>
                     </div>
                 </div>
 
                 {/* Right Column: Visual Logo */}
-                <div className="animate-fade-in delay-200 hero-logo-container" style={styles.visualContainer}>
-                    <img src="/logo.png" alt="Mnemix Logo" style={styles.heroLogo} />
+                <div className="animate-fade-in delay-200 float hero-logo-container" style={styles.visualContainer}>
+                    <img src="/logo.png" alt="Mnemix Logo" className="pulse-glow" style={styles.heroLogo} />
                 </div>
             </div>
         </section>
@@ -45,10 +44,11 @@ const styles = {
     glow: {
         position: 'absolute' as const,
         top: '-10%',
-        right: '-10%',
+        right: '-5%',
         width: '800px',
         height: '600px',
-        background: 'radial-gradient(ellipse at center, rgba(20, 184, 166, 0.15) 0%, rgba(10, 10, 10, 0) 70%)',
+        background: 'radial-gradient(ellipse at center, rgba(20, 184, 166, 0.15) 0%, rgba(10, 10, 10, 0) 75%)',
+        filter: 'blur(100px)',
         zIndex: -1,
         pointerEvents: 'none' as const,
     },

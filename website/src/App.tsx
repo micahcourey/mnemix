@@ -1,7 +1,7 @@
 import Header from './components/Header';
 import Hero from './components/Hero';
-// import Ecosystem from './components/Ecosystem';
 import Features from './components/Features';
+import DetailedFeatures from './components/DetailedFeatures';
 import HowItWorks from './components/HowItWorks';
 import Footer from './components/Footer';
 import './App.css';
@@ -13,7 +13,7 @@ function App() {
       <main>
         <Hero />
         <Features />
-        {/* <Ecosystem /> */}
+        <DetailedFeatures />
         <HowItWorks />
       </main>
       <Footer />
