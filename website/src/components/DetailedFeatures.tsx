@@ -1,86 +1,181 @@
-import { Hexagon, Database, History, Search, Zap, ShieldCheck } from 'lucide-react';
+import { useState } from 'react';
+import { Terminal, Copy, Database, ArrowRight, Layers, Lock } from 'lucide-react';
+
+const features = [
+    {
+        id: "storage",
+        tab: "Storage",
+        title: "Local-First Persistence",
+        description: "Mnemix leverages LanceDB and Apache Arrow for a lean, embedded memory store that runs entirely on your local filesystem. No cloud clusters, no managed latency—just raw speed.",
+        type: "diagram",
+        diagram: "storage"
+    },
+    {
+        id: "search",
+        tab: "Search",
+        title: "Semantic Global Search",
+        description: "Combine vector search with traditional SQL-like metadata filtering. Surface exactly what your agent needs from gigabytes of historical context in milliseconds.",
+        type: "code",
+        code: `# Hybrid Search: Vector + Metadata filters
+results = client.search(
+    "How did we resolve the CORS issue?",
+    kind="decision",
+    limit=3
+)
+
+# Output format
+[
+  {"text": "Refactored origin headers...", "score": 0.98},
+  {"text": "Added CORS middleware...", "score": 0.85}
+]`
+    },
+    {
+        id: "versioning",
+        tab: "Versioning",
+        title: "Immutable History",
+        description: "Every write is a discrete, immutable version. Mnemix allows you to browse the full timeline of an agent's reasoning and restore the state to any prior checkpoint.",
+        type: "code",
+        code: `# Inspect the thought timeline
+history = client.history()
+print(f"Current version: {history[0].version_id}")
+
+# Time-travel to a previous state
+client.restore(version_id="v_prev_992")
+print("Memory state restored to checkpoint.")`
+    },
+    {
+        id: "context",
+        tab: "Context",
+        title: "Progressive Context Layers",
+        description: "Avoid flooding the LLM context window. Mnemix layers retrieval into Pinned, Summary, and Archival tiers to maintain high reasoning quality with lower token costs.",
+        type: "diagram",
+        diagram: "layers"
+    },
+    {
+        id: "types",
+        tab: "Typed Memory",
+        title: "Typed Knowledge Graph",
+        description: "Memories aren't just strings. Categorize knowledge as Observations, Decisions, Facts, or Warnings to help your agent differentiate between noise and signal.",
+        type: "code",
+        code: `# Store a structured decision
+client.remember(
+    title="Primary DB Choice",
+    summary="Using LanceDB for local-first speed",
+    kind="decision",
+    importance=90
+)
+
+# Recall only procedures
+tasks = client.recall(kind="procedure")`
+    }
+];
 
 export default function DetailedFeatures() {
-    const features = [
-        {
-            icon: <Database size={48} className="text-primary" />,
-            title: "Local-First Persistence",
-            subtitle: "Built on LanceDB for lightning-fast, embedded vector storage.",
-            description: "Mnemix leverages the power of LanceDB and Apache Arrow to provide a high-performance memory backend that runs entirely in-process. This architecture eliminates the latency and privacy concerns of cloud-based vector databases while offering enterprise-grade search capabilities.",
-            visual: "storage"
-        },
-        {
-            icon: <History size={48} className="text-secondary" />,
-            title: "Immutable Version History",
-            subtitle: "Audit every thought and action with absolute precision.",
-            description: "Every memory write operation in Mnemix creates an immutable version of the store. This 'Time-Travel' capability allows you to inspect the agent's state at any historical point, roll back mistakes, and perform A/B testing on different agent reasoning paths.",
-            visual: "history"
-        },
-        {
-            icon: <ShieldCheck size={48} className="text-primary" />,
-            title: "Strict Privacy & Isolation",
-            description: "Security is built into the core. Mnemix enforces workspace siloing at the file level, ensuring that memories from one project or client never leak into another. Since it's local-first, sensitive data never leaves your infrastructure.",
-            visual: "security"
-        },
-        {
-            icon: <Zap size={48} className="text-secondary" />,
-            title: "Progressive Context Layers",
-            description: "Avoid 'context flooding' that confuses LLMs. Mnemix uses a layered retrieval strategy: Pinned memories for immediate facts, Summaries for broad context, and Archival search for deep retrieval. Your agents find exactly what they need, exactly when they need it.",
-            visual: "layers"
-        },
-        {
-            icon: <Search size={48} className="text-primary" />,
-            title: "Hybrid Search Heuristics",
-            description: "Combine the best of both worlds. Mnemix merges semantic vector search with traditional full-text keywords and metadata filters. Our smart ranking heuristics incorporate importance scores and temporal relevance to surface the most contextually significant data first.",
-            visual: "search"
-        },
-        {
-            icon: <Hexagon size={48} className="text-secondary" />,
-            title: "Typed Knowledge Graphs",
-            description: "Memory isn't just text—it's knowledge. Categorize agent memories by kind: Observations, Explicit Decisions, Procedures, Facts, and Warnings. This semantic typing allows agents to reason more effectively about the information they retrieve.",
-            visual: "typed"
-        }
-    ];
+    const [activeTab, setActiveTab] = useState(0);
+
+    const handleTabClick = (index: number) => {
+        setActiveTab(index);
+    };
+
+    const activeFeature = features[activeTab];
 
     return (
         <section id="deep-dive" style={styles.section}>
             <div className="container">
                 <div style={styles.header}>
                     <h2 style={styles.sectionTitle}>Engineered for <span className="text-gradient">Production Agents</span></h2>
-                    <p style={styles.sectionSubtitle}>
-                        A deep dive into the architecture that makes Mnemix the most reliable memory backend for AI agents.
-                    </p>
                 </div>
 
-                <div style={styles.rowsContainer}>
-                    {features.map((feature, index) => (
-                        <div
-                            key={index}
+                <div className="tab-navigation" style={styles.tabsRow}>
+                    {features.map((f, i) => (
+                        <button
+                            key={f.id}
+                            onClick={() => handleTabClick(i)}
                             style={{
-                                ...styles.row,
-                                flexDirection: (index % 2 === 1 ? 'row-reverse' : 'row') as any
+                                ...styles.tabBtn,
+                                border: i === activeTab ? '1px solid var(--color-primary)' : '1px solid transparent',
+                                backgroundColor: i === activeTab ? 'rgba(20, 184, 166, 0.05)' : 'rgba(255, 255, 255, 0.02)',
+                                color: i === activeTab ? 'var(--color-primary)' : 'var(--color-text-muted)',
                             }}
-                            className="detailed-feature-row"
                         >
-                            <div style={styles.textContent}>
-                                <div style={styles.iconBox}>{feature.icon}</div>
-                                <h3 style={styles.featureTitle}>{feature.title}</h3>
-                                {feature.subtitle && <h4 style={styles.featureSubtitle}>{feature.subtitle}</h4>}
-                                <p style={styles.featureDesc}>{feature.description}</p>
-                            </div>
+                            {f.tab}
+                        </button>
+                    ))}
+                </div>
 
-                            <div style={styles.visualContent}>
-                                <div className="glass-card visual-placeholder animate-fade-in" style={styles.visualCard}>
-                                    <div style={styles.visualGlow} />
-                                    {/* Mock Visual Representation */}
-                                    <div style={styles.visualInner}>
-                                        <div style={styles.visualLabel}>{feature.visual.toUpperCase()} ENGINE</div>
-                                        <div style={styles.visualPulse} className="pulse-glow" />
+                <div className="content-row" style={styles.contentRow}>
+                    <div className="text-col" style={styles.textCol}>
+                        <div key={activeFeature.id} className="animate-fade-in">
+                            <h2 style={styles.title}>{activeFeature.title}</h2>
+                            <p style={styles.description}>{activeFeature.description}</p>
+                        </div>
+                    </div>
+
+                    <div className="visual-col" style={styles.visualCol}>
+                        {activeFeature.type === 'code' ? (
+                            <div className="glass-card" style={styles.codeWindow}>
+                                <div style={styles.windowHeader}>
+                                    <div style={styles.dots}>
+                                        <div style={{ ...styles.dot, backgroundColor: '#ff5f56' }}></div>
+                                        <div style={{ ...styles.dot, backgroundColor: '#ffbd2e' }}></div>
+                                        <div style={{ ...styles.dot, backgroundColor: '#27c93f' }}></div>
                                     </div>
+                                    <div style={styles.windowTitle}>
+                                        <Terminal size={14} /> mnemix_agent.py
+                                    </div>
+                                    <div style={styles.copyBtn}><Copy size={14} /></div>
+                                </div>
+                                <div style={styles.codeArea}>
+                                    <pre style={styles.pre}>
+                                        <code style={styles.codeText}>{activeFeature.code}</code>
+                                    </pre>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        ) : (
+                            <div className="glass-card" style={styles.diagramWindow}>
+                                {activeFeature.diagram === 'storage' && (
+                                    <div style={styles.storageDiagram}>
+                                        <div style={styles.diagramNode}>
+                                            <Terminal size={24} className="text-primary" />
+                                            <span style={styles.nodeLabel}>Your Agent</span>
+                                        </div>
+                                        <ArrowRight size={24} className="text-muted" />
+                                        <div style={styles.diagramNode}>
+                                            <div style={styles.pulseDisk} className="pulse-glow">
+                                                <Database size={32} />
+                                            </div>
+                                            <span style={styles.nodeLabel}>LanceDB (local)</span>
+                                        </div>
+                                        <ArrowRight size={24} className="text-muted" />
+                                        <div style={styles.diagramNode}>
+                                            <div style={styles.arrowTable}>
+                                                <div style={styles.tableRow}></div>
+                                                <div style={styles.tableRow}></div>
+                                                <div style={styles.tableRow}></div>
+                                            </div>
+                                            <span style={styles.nodeLabel}>Apache Arrow</span>
+                                        </div>
+                                    </div>
+                                )}
+                                {activeFeature.diagram === 'layers' && (
+                                    <div style={styles.layersDiagram}>
+                                        <div style={styles.layerCard} className="glass-card">
+                                            <Lock size={16} className="text-primary" />
+                                            <span>Pinned Context</span>
+                                        </div>
+                                        <div style={{ ...styles.layerCard, opacity: 0.8 }} className="glass-card">
+                                            <Layers size={16} className="text-secondary" />
+                                            <span>Summary Layer</span>
+                                        </div>
+                                        <div style={{ ...styles.layerCard, opacity: 0.6 }} className="glass-card">
+                                            <Database size={16} className="text-muted" />
+                                            <span>Archival Store</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         </section>
@@ -89,110 +184,189 @@ export default function DetailedFeatures() {
 
 const styles = {
     section: {
-        padding: '120px 0',
+        padding: '100px 0',
         backgroundColor: 'var(--color-bg-base)',
         borderTop: '1px solid var(--color-border)',
     },
     header: {
         textAlign: 'center' as const,
-        marginBottom: '100px',
+        marginBottom: '60px',
     },
     sectionTitle: {
         fontSize: '3rem',
-        marginBottom: '1.5rem',
+        marginBottom: '1rem',
     },
-    sectionSubtitle: {
-        fontSize: '1.25rem',
-        color: 'var(--color-text-muted)',
-        maxWidth: '800px',
-        margin: '0 auto',
-    },
-    rowsContainer: {
+    tabsRow: {
         display: 'flex',
-        flexDirection: 'column' as const,
-        gap: '120px',
+        gap: '0.5rem',
+        marginBottom: '60px',
+        justifyContent: 'center',
+        flexWrap: 'wrap' as const,
     },
-    row: {
+    tabBtn: {
+        padding: '0.75rem 2.5rem',
+        borderRadius: '8px',
+        fontSize: '0.9rem',
+        fontWeight: 500,
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        minWidth: '140px',
+        fontFamily: 'var(--font-sans)',
+    },
+    contentRow: {
         display: 'flex',
-        alignItems: 'center',
         gap: '4rem',
-        justifyContent: 'space-between',
+        alignItems: 'center',
+        minHeight: '400px',
     },
-    textContent: {
+    textCol: {
         flex: 1,
         display: 'flex',
         flexDirection: 'column' as const,
         gap: '1.5rem',
+        textAlign: 'left' as const,
     },
-    iconBox: {
-        width: '80px',
-        height: '80px',
-        borderRadius: '20px',
-        background: 'rgba(255, 255, 255, 0.03)',
-        border: '1px solid var(--color-border)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: '1rem',
-    },
-    featureTitle: {
-        fontSize: '2rem',
-        fontWeight: 700,
+    title: {
+        fontSize: '2.5rem',
+        lineHeight: 1.2,
         margin: 0,
     },
-    featureSubtitle: {
-        fontSize: '1.2rem',
-        color: 'var(--color-primary)',
-        fontWeight: 500,
-        margin: '-0.5rem 0 0 0',
-    },
-    featureDesc: {
+    description: {
         fontSize: '1.1rem',
         color: 'var(--color-text-muted)',
-        lineHeight: 1.8,
+        lineHeight: 1.6,
         margin: 0,
     },
-    visualContent: {
-        flex: 1,
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    visualCard: {
+    progressContainer: {
         width: '100%',
-        maxWidth: '500px',
-        height: '320px',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        position: 'relative' as const,
+        height: '2px',
+        backgroundColor: 'var(--color-border)',
+        marginTop: '2rem',
+    },
+    progressBar: {
+        height: '100%',
+        backgroundColor: 'var(--color-primary)',
+        transition: 'width 0.05s linear',
+    },
+    visualCol: {
+        flex: 1.2,
+    },
+    codeWindow: {
+        padding: 0,
+        background: '#0d1117',
+        border: '1px solid var(--color-border)',
+        borderRadius: '12px',
         overflow: 'hidden',
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+    },
+    diagramWindow: {
+        height: '350px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         background: 'linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, rgba(59, 130, 246, 0.05) 100%)',
+        borderRadius: '12px',
+        border: '1px solid var(--color-border)',
     },
-    visualGlow: {
-        position: 'absolute' as const,
-        width: '200px',
-        height: '200px',
-        background: 'radial-gradient(circle, rgba(20, 184, 166, 0.2) 0%, transparent 70%)',
-        filter: 'blur(40px)',
+    windowHeader: {
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0.75rem 1rem',
+        borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+        backgroundColor: 'rgba(255, 255, 255, 0.02)',
     },
-    visualInner: {
+    dots: {
+        display: 'flex',
+        gap: '6px',
+        marginRight: '1rem',
+    },
+    dot: {
+        width: '10px',
+        height: '10px',
+        borderRadius: '50%',
+    },
+    windowTitle: {
+        fontSize: '0.85rem',
+        color: 'var(--color-text-muted)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.5rem',
+        flex: 1,
+        justifyContent: 'center',
+    },
+    copyBtn: {
+        color: 'var(--color-text-subtle)',
+        cursor: 'pointer',
+    },
+    codeArea: {
+        padding: '1.5rem',
+        maxHeight: '350px',
+        overflowY: 'auto' as const,
+        textAlign: 'left' as const,
+    },
+    pre: {
+        margin: 0,
+    },
+    codeText: {
+        fontFamily: 'var(--font-mono)',
+        fontSize: '0.95rem',
+        color: '#e6edf3',
+        lineHeight: 1.6,
+        whiteSpace: 'pre-wrap' as const,
+    },
+    storageDiagram: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '2rem',
+    },
+    diagramNode: {
         display: 'flex',
         flexDirection: 'column' as const,
         alignItems: 'center',
-        gap: '1rem',
-        zIndex: 1,
+        gap: '0.75rem',
     },
-    visualLabel: {
+    nodeLabel: {
+        fontSize: '0.8rem',
+        color: 'var(--color-text-muted)',
         fontFamily: 'var(--font-cyber)',
-        fontSize: '0.9rem',
-        letterSpacing: '0.2em',
-        color: 'var(--color-text-subtle)',
+        letterSpacing: '0.1em',
     },
-    visualPulse: {
-        width: '60px',
-        height: '60px',
+    pulseDisk: {
+        width: '64px',
+        height: '64px',
         borderRadius: '50%',
         border: '2px solid var(--color-primary)',
-    }
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--color-primary)',
+    },
+    arrowTable: {
+        width: '60px',
+        height: '60px',
+        border: '1px solid var(--color-text-muted)',
+        display: 'flex',
+        flexDirection: 'column' as const,
+        gap: '4px',
+        padding: '6px',
+    },
+    tableRow: {
+        height: '10px',
+        background: 'rgba(255,255,255,0.1)',
+        width: '100%',
+    },
+    layersDiagram: {
+        display: 'flex',
+        flexDirection: 'column' as const,
+        gap: '1rem',
+        width: '100%',
+        maxWidth: '300px',
+    },
+    layerCard: {
+        padding: '0.75rem 1rem',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '1rem',
+        fontSize: '0.9rem',
+    },
 };

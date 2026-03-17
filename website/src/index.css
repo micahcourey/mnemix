@@ -208,14 +208,29 @@ a:hover {
     padding-top: 1.5rem;
   }
 
-  .detailed-feature-row {
+  #deep-dive .content-row {
     flex-direction: column !important;
     gap: 2rem !important;
     text-align: center;
   }
 
-  .detailed-feature-row>div {
+  #deep-dive .text-col {
     align-items: center !important;
+    text-align: center !important;
+  }
+
+  #deep-dive .visual-col {
+    width: 100%;
+  }
+
+  .tab-navigation {
+    gap: 0.5rem !important;
+  }
+
+  .tab-navigation button {
+    padding: 0.5rem 1rem !important;
+    min-width: auto !important;
+    flex: 1;
   }
 }
 
