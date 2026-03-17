@@ -1,4 +1,4 @@
-import { Github, Twitter } from 'lucide-react';
+import { Github, Linkedin } from 'lucide-react';
 
 export default function Footer() {
     return (
@@ -26,7 +26,7 @@ export default function Footer() {
                             <h4 style={styles.colTitle}>Project</h4>
                             <a href="https://github.com/micahcourey/mnemix" style={styles.link}>GitHub</a>
                             <a href="https://github.com/micahcourey/mnemix/releases" style={styles.link}>Releases</a>
-                            <a href="#license" style={styles.link}>License</a>
+                            <a href="https://github.com/micahcourey/mnemix/blob/main/LICENSE" style={styles.link}>License</a>
                         </div>
                     </div>
                 </div>
@@ -39,8 +39,8 @@ export default function Footer() {
                         <a href="https://github.com/micahcourey/mnemix" style={styles.socialLink} aria-label="GitHub">
                             <Github size={20} />
                         </a>
-                        <a href="#" style={styles.socialLink} aria-label="Twitter">
-                            <Twitter size={20} />
+                        <a href="https://www.linkedin.com/in/micahcourey/" target="_blank" rel="noreferrer" style={styles.socialLink} aria-label="LinkedIn">
+                            <Linkedin size={20} />
                         </a>
                     </div>
                 </div>
