@@ -150,6 +150,28 @@ mnemix --store .mnemix import --source ./backups/mnemix-export
 
 Imports are staged onto an isolated branch so the current main store remains unchanged until the staged data is reviewed.
 
+## Interactive UI
+
+The `mnemix ui` command opens an interactive terminal interface for browsing and searching memories. It is designed for human-first exploration and provides a browse-first view of recent, pinned, and search-driven memory inspection.
+
+```bash
+mnemix --store .mnemix ui
+```
+
+### Key features
+
+- **Browse-first view**: See recent and pinned memories immediately.
+- **Search-driven**: Refine the view with text-based search directly in the TUI.
+- **Keyboard-first**: Navigate with arrows, filter with keys, and inspect details without leaving the interface.
+- **Time filters**: Use explicit from/to date filters to narrow down your inspection.
+
+### Options
+
+| Option | Description |
+|---|---|
+| `--limit <LIMIT>` | Maximum number of memories to load [default: 200] |
+| `--store <PATH>` | Path to the local store [default: .mnemix] |
+
 ## JSON mode
 
 Pass `--json` to receive a stable machine-readable response envelope:

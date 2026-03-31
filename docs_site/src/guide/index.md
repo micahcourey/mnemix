@@ -94,6 +94,7 @@ mnemix --store .mnemix search --text "persistent agent memory" --scope repo:mnem
 - The [Python client](/guide/python) wraps the CLI's `--json` contract.
 - The [Host Adapters](/guide/host-adapters) page shows how to shape recall and writeback for coding, chat, CI, and review workflows.
 - The [Policy Runner](/guide/policy-runner) page shows how to combine guided memory usage with required workflow checkpoints.
+- The [Mnemix Workflow](/guide/mnemix-workflow) page explains the repo-native planning methodology and the companion `mxw` CLI.
 - The [storage foundation](/guide/lancedb) explains why Mnemix uses LanceDB and Lance underneath.
 
 ## Ecosystem

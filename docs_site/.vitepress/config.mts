@@ -38,6 +38,7 @@ export default withMermaid(defineConfig({
                         { text: 'Python', link: '/guide/python' },
                         { text: 'Host Adapters', link: '/guide/host-adapters' },
                         { text: 'Policy Runner', link: '/guide/policy-runner' },
+                        { text: 'Mnemix Workflow', link: '/guide/mnemix-workflow' },
                         { text: 'Storage Foundation', link: '/guide/lancedb' }
                     ]
                 },

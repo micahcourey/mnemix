@@ -2,6 +2,7 @@ import Header from './components/Header';
 import Hero from './components/Hero';
 import Features from './components/Features';
 import DetailedFeatures from './components/DetailedFeatures';
+import Ecosystem from './components/Ecosystem';
 import HowItWorks from './components/HowItWorks';
 import Footer from './components/Footer';
 import './App.css';
@@ -14,6 +15,7 @@ function App() {
         <Hero />
         <Features />
         <DetailedFeatures />
+        <Ecosystem />
         <HowItWorks />
       </main>
       <Footer />

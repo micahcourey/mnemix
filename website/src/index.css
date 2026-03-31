@@ -179,9 +179,9 @@ a:hover {
 
 /* Ecosystem Card */
 .ecosystem-card {
-  display: grid;
-  grid-template-columns: 1.4fr 0.9fr;
-  gap: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
   align-items: stretch;
   background: linear-gradient(135deg, rgba(20, 184, 166, 0.08) 0%, rgba(255, 255, 255, 0.03) 100%);
 }
@@ -193,6 +193,13 @@ a:hover {
   flex-direction: column;
   justify-content: center;
   gap: 1rem;
+}
+
+.ecosystem-subcard {
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 1.5rem !important;
+  height: 100%;
 }
 
 @media (max-width: 900px) {
