@@ -233,7 +233,7 @@ pub use policy::{
 };
 pub use query::{
     DisclosureDepth, HistoryQuery, QueryLimit, RecallEntry, RecallExplanation, RecallLayer,
-    RecallQuery, RecallReason, RecallResult, SearchQuery, StatsQuery, StatsSnapshot,
+    RecallQuery, RecallReason, RecallResult, RetrievalMode, SearchQuery, StatsQuery, StatsSnapshot,
 };
 pub use retention::{
     CheckpointProtection, CleanupMode, PreCleanupCheckpointPolicy, PreOperationCheckpointPolicy,
