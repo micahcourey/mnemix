@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use super::{
-    data::{BrowseMode, MemoryEntry},
+    data::{BrowseMode, MemoryEntry, retrieval_mode_label},
     state::{AppState, FocusPane},
 };
 use mnemix_core::memory::MemoryKind;
@@ -17,7 +17,7 @@ pub(crate) fn render(frame: &mut Frame, state: &AppState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),
-            Constraint::Length(2),
+            Constraint::Length(3),
             Constraint::Length(2),
         ])
         .split(frame.area());
@@ -33,11 +33,16 @@ pub(crate) fn render(frame: &mut Frame, state: &AppState) {
 
     let sidebar = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(8)])
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Length(6),
+            Constraint::Min(8),
+        ])
         .split(columns[0]);
 
     render_modes(frame, state, sidebar[0]);
-    render_scopes(frame, state, sidebar[1]);
+    render_retrieval_modes(frame, state, sidebar[1]);
+    render_scopes(frame, state, sidebar[2]);
     render_results(frame, state, columns[1]);
     render_detail(frame, state, columns[2]);
     render_status(frame, state, root[1]);
@@ -81,6 +86,32 @@ fn render_scopes(frame: &mut Frame, state: &AppState, area: Rect) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
+fn render_retrieval_modes(frame: &mut Frame, state: &AppState, area: Rect) {
+    let items = AppState::retrieval_mode_options()
+        .iter()
+        .map(|mode| {
+            let label = retrieval_mode_label(*mode);
+            let suffix = state
+                .vector_summary()
+                .unavailable_reason(*mode)
+                .map_or("", |_| " (unavailable)");
+            ListItem::new(format!("{label}{suffix}"))
+        })
+        .collect::<Vec<_>>();
+    let mut list_state =
+        ListState::default().with_selected(Some(state.selected_retrieval_mode_index()));
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title("Search Mode")
+                .borders(Borders::ALL)
+                .border_style(border_style(state.focus() == FocusPane::Retrieval)),
+        )
+        .highlight_style(selected_style())
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
+
 fn render_results(frame: &mut Frame, state: &AppState, area: Rect) {
     let block = Block::default()
         .title(result_title(state))
@@ -112,9 +143,14 @@ fn render_results(frame: &mut Frame, state: &AppState, area: Rect) {
             let record = entry.record();
             ListItem::new(vec![
                 Line::from(format!(
-                    "{} · {}",
+                    "{} · {}{}",
                     record.title(),
-                    memory_kind_label(record.kind())
+                    memory_kind_label(record.kind()),
+                    entry
+                        .search_match()
+                        .map_or_else(String::new, |search_match| {
+                            format!(" · {}", search_match.label())
+                        })
                 ))
                 .bold(),
                 Line::from(format!(
@@ -163,16 +199,25 @@ fn render_detail(frame: &mut Frame, state: &AppState, area: Rect) {
 
 fn render_status(frame: &mut Frame, state: &AppState, area: Rect) {
     let status = format!(
-        "Mode: {} | Scope: {} | Query: {} | Updated from: {} | Updated to: {} | Results: {}",
+        "Mode: {} | Search mode: {} ({}) | Scope: {} | Query: {} | Updated from: {} | Updated to: {} | Results: {}\n{}",
         state.selected_mode().label(),
+        state.selected_retrieval_mode_label(),
+        if state.selected_retrieval_mode_supported() {
+            "available"
+        } else {
+            "unavailable"
+        },
         state.selected_scope().label(),
         display_filter_value(&state.search_filters().query),
         display_filter_value(&state.search_filters().date_from),
         display_filter_value(&state.search_filters().date_to),
         state.result_count(),
+        state.vector_summary().status_line(),
     );
     frame.render_widget(
-        Paragraph::new(status).block(Block::default().borders(Borders::TOP).title("Filters")),
+        Paragraph::new(status)
+            .block(Block::default().borders(Borders::TOP).title("Status"))
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -186,7 +231,7 @@ fn render_footer(frame: &mut Frame, state: &AppState, area: Rect) {
         )
     } else {
         state.status_message().unwrap_or(
-            "Tab focus | j/k move | / query | f from | t to | Enter or l focus detail | Esc or h back | q quit",
+            "Tab focus | j/k move | / query | f from | t to | r refresh | Enter or l focus detail | Esc or h back | q quit",
         )
         .to_owned()
     };
@@ -253,6 +298,16 @@ fn detail_text(entry: &MemoryEntry) -> Text<'static> {
         lines.push(Line::from(format!("Pin reason: {reason}")));
     }
 
+    if let Some(search_match) = entry.search_match() {
+        lines.push(Line::from(format!(
+            "Search match: {}",
+            search_match.label()
+        )));
+        if let Some(score) = search_match.semantic_score() {
+            lines.push(Line::from(format!("Semantic score: {score}")));
+        }
+    }
+
     lines.push(Line::from(format!("Tags: {}", display_filter_value(&tags))));
     lines.push(Line::from(format!(
         "Entities: {}",
@@ -287,7 +342,7 @@ fn detail_text(entry: &MemoryEntry) -> Text<'static> {
 fn result_title(state: &AppState) -> String {
     match state.selected_mode() {
         BrowseMode::Search if state.search_query_is_empty() => "Results".to_owned(),
-        BrowseMode::Search => "Search Results".to_owned(),
+        BrowseMode::Search => format!("Search Results ({})", state.selected_retrieval_mode_label()),
         BrowseMode::Recent => "Recent Memories".to_owned(),
         BrowseMode::Pinned => "Pinned Memories".to_owned(),
     }

@@ -170,6 +170,10 @@ mnemix --store .mnemix vectors show
 mnemix --store .mnemix ui
 ```
 
+The TUI now exposes recent, pinned, and search views along with compact
+vector-readiness status and retrieval-mode availability inside the same
+interface.
+
 ### Checkpoint before a risky operation
 
 ```bash
@@ -203,7 +207,7 @@ mnemix --store .mnemix vectors show
 mnemix --store .mnemix vectors backfill
 ```
 
-Today, the shipped CLI exposes vector configuration and status, but not end-to-end embedding execution. `vectors backfill` is a dry-run planner, and `vectors backfill --apply` intentionally returns an unsupported error because the CLI binary does not yet wire in an embedding provider. Likewise, CLI `search` and `recall` remain lexical today even though the LanceDB backend now supports semantic-only and hybrid retrieval when opened with an embedding provider.
+Today, the shipped CLI exposes vector configuration and status, but not end-to-end embedding execution. `vectors backfill` is a dry-run planner, and `vectors backfill --apply` intentionally returns an unsupported error because the CLI binary does not yet wire in an embedding provider. Likewise, top-level CLI `search` and `recall` remain lexical today even though the LanceDB backend now supports semantic-only and hybrid retrieval when opened with an embedding provider. The TUI surfaces vector readiness, retrieval-mode selection, and explicit unavailable-mode messaging, but semantic and hybrid execution still depends on a runtime that actually attaches an embedding provider.
 
 Vector state is preserved during export and staged import, so portable archives and import-review flows do not silently drop persisted embeddings or vector configuration.
 

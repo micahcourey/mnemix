@@ -72,9 +72,10 @@ That path returns an explicit unsupported error because the CLI binary does not 
 There are two different layers to keep straight:
 
 - The LanceDB backend now supports lexical, semantic-only, and hybrid retrieval modes.
-- The shipped `mnemix` CLI still exposes lexical `search` and `recall` commands.
+- The shipped `mnemix` CLI still exposes lexical top-level `search` and `recall` commands.
+- `mnemix ui` now surfaces vector status plus lexical, semantic, and hybrid mode selection, but semantic and hybrid modes remain unavailable unless the runtime opens the store with an embedding provider.
 
-That means vector enablement is already useful for store portability, coverage tracking, and backend/API consumers, but the human-facing CLI has not yet grown a `search --mode semantic` or `recall --mode hybrid` surface.
+That means vector enablement is already useful for store portability, coverage tracking, backend/API consumers, and TUI inspection, but end-to-end semantic execution in the shipped CLI still depends on future runtime provider wiring.
 
 ## Portability and import flows
 

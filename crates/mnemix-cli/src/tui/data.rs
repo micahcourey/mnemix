@@ -2,9 +2,9 @@ use std::{collections::BTreeSet, time::SystemTime};
 
 use humantime::format_rfc3339;
 use mnemix_core::{
-    MemoryRecord, QueryLimit, ScopeId, SearchQuery,
-    traits::{BrowseBackend, RecallBackend},
+    MemoryRecord, QueryLimit, RetrievalMode, ScopeId, SearchQuery, traits::BrowseBackend,
 };
+use mnemix_lancedb::{LanceDbBackend, SearchMatch};
 
 use crate::errors::CliError;
 
@@ -24,6 +24,125 @@ impl BrowseMode {
             Self::Pinned => "Pinned",
             Self::Search => "Search",
         }
+    }
+}
+
+pub(crate) const RETRIEVAL_MODES: [RetrievalMode; 3] = [
+    RetrievalMode::LexicalOnly,
+    RetrievalMode::SemanticOnly,
+    RetrievalMode::Hybrid,
+];
+
+pub(crate) const fn retrieval_mode_label(mode: RetrievalMode) -> &'static str {
+    match mode {
+        RetrievalMode::LexicalOnly => "Lexical",
+        RetrievalMode::SemanticOnly => "Semantic",
+        RetrievalMode::Hybrid => "Hybrid",
+    }
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VectorSummary {
+    vectors_enabled: bool,
+    auto_embed_on_write: bool,
+    embedding_model: Option<String>,
+    embedding_dimensions: Option<u32>,
+    has_embedding_provider: bool,
+    semantic_retrieval_available: bool,
+    embedded_memories: u64,
+    total_memories: u64,
+    embedding_coverage_percent: u8,
+    vector_index_available: bool,
+    vector_index_reason: Option<String>,
+}
+
+impl VectorSummary {
+    pub(crate) fn load(backend: &LanceDbBackend) -> Result<Self, CliError> {
+        let status = backend.vector_status()?;
+        let settings = status.settings();
+
+        Ok(Self {
+            vectors_enabled: settings.vectors_enabled(),
+            auto_embed_on_write: settings.auto_embed_on_write(),
+            embedding_model: settings.embedding_model().map(ToOwned::to_owned),
+            embedding_dimensions: settings.embedding_dimensions(),
+            has_embedding_provider: status.has_embedding_provider(),
+            semantic_retrieval_available: status.semantic_retrieval_available(),
+            embedded_memories: status.embedded_memories(),
+            total_memories: status.total_memories(),
+            embedding_coverage_percent: status.embedding_coverage_percent(),
+            vector_index_available: status.vector_index().available(),
+            vector_index_reason: status.vector_index().reason().map(ToOwned::to_owned),
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_parts(
+        vectors_enabled: bool,
+        has_embedding_provider: bool,
+        semantic_retrieval_available: bool,
+    ) -> Self {
+        Self {
+            vectors_enabled,
+            auto_embed_on_write: false,
+            embedding_model: None,
+            embedding_dimensions: None,
+            has_embedding_provider,
+            semantic_retrieval_available,
+            embedded_memories: 0,
+            total_memories: 0,
+            embedding_coverage_percent: 0,
+            vector_index_available: false,
+            vector_index_reason: Some("not yet indexed".to_owned()),
+        }
+    }
+
+    pub(crate) const fn supports_mode(&self, mode: RetrievalMode) -> bool {
+        match mode {
+            RetrievalMode::LexicalOnly => true,
+            RetrievalMode::SemanticOnly | RetrievalMode::Hybrid => {
+                self.semantic_retrieval_available
+            }
+        }
+    }
+
+    pub(crate) fn unavailable_reason(&self, mode: RetrievalMode) -> Option<String> {
+        if self.supports_mode(mode) {
+            return None;
+        }
+
+        let mode_label = retrieval_mode_label(mode);
+        let reason = if !self.vectors_enabled {
+            "vectors are not enabled for this store".to_owned()
+        } else if !self.has_embedding_provider {
+            "this CLI session does not have an embedding provider attached".to_owned()
+        } else {
+            "semantic retrieval is not available for the current store".to_owned()
+        };
+
+        Some(format!("{mode_label} search unavailable: {reason}."))
+    }
+
+    pub(crate) fn status_line(&self) -> String {
+        format!(
+            "Vectors: enabled={} model={} dims={} provider={} semantic={} auto-embed={} coverage={}% ({}/{}) index={}{}",
+            self.vectors_enabled,
+            self.embedding_model.as_deref().unwrap_or("none"),
+            self.embedding_dimensions
+                .map_or_else(|| "none".to_owned(), |value| value.to_string()),
+            yes_no(self.has_embedding_provider),
+            yes_no(self.semantic_retrieval_available),
+            yes_no(self.auto_embed_on_write),
+            self.embedding_coverage_percent,
+            self.embedded_memories,
+            self.total_memories,
+            yes_no(self.vector_index_available),
+            self.vector_index_reason
+                .as_deref()
+                .map(|reason| format!(" ({reason})"))
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -62,6 +181,7 @@ pub(crate) struct MemoryEntry {
     record: MemoryRecord,
     created_date: String,
     updated_date: String,
+    search_match: Option<SearchMatchDetails>,
 }
 
 impl MemoryEntry {
@@ -70,6 +190,18 @@ impl MemoryEntry {
             created_date: record_date(record.created_at().value()),
             updated_date: record_date(record.updated_at().value()),
             record,
+            search_match: None,
+        }
+    }
+
+    pub(crate) fn from_search_match(search_match: SearchMatch) -> Self {
+        let details = SearchMatchDetails::from_search_match(&search_match);
+        let record = search_match.into_record();
+        Self {
+            created_date: record_date(record.created_at().value()),
+            updated_date: record_date(record.updated_at().value()),
+            record,
+            search_match: Some(details),
         }
     }
 
@@ -83,6 +215,42 @@ impl MemoryEntry {
 
     pub(crate) fn updated_date(&self) -> &str {
         &self.updated_date
+    }
+
+    pub(crate) fn search_match(&self) -> Option<&SearchMatchDetails> {
+        self.search_match.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SearchMatchDetails {
+    lexical_match: bool,
+    semantic_match: bool,
+    semantic_score: Option<String>,
+}
+
+impl SearchMatchDetails {
+    fn from_search_match(search_match: &SearchMatch) -> Self {
+        Self {
+            lexical_match: search_match.lexical_match(),
+            semantic_match: search_match.semantic_match(),
+            semantic_score: search_match
+                .semantic_score()
+                .map(|score| format!("{score:.3}")),
+        }
+    }
+
+    pub(crate) const fn label(&self) -> &'static str {
+        match (self.lexical_match, self.semantic_match) {
+            (true, true) => "hybrid",
+            (true, false) => "lexical",
+            (false, true) => "semantic",
+            (false, false) => "unknown",
+        }
+    }
+
+    pub(crate) fn semantic_score(&self) -> Option<&str> {
+        self.semantic_score.as_deref()
     }
 }
 
@@ -144,19 +312,19 @@ impl BrowserData {
     }
 }
 
-pub(crate) fn search_entries<B>(
-    backend: &B,
+pub(crate) fn search_entries(
+    backend: &LanceDbBackend,
     query_text: &str,
     scope: Option<ScopeId>,
     limit: QueryLimit,
-) -> Result<Vec<MemoryEntry>, CliError>
-where
-    B: RecallBackend,
-    CliError: From<B::Error>,
-{
-    let query = SearchQuery::new(query_text.to_owned(), scope, limit)?;
-    let records = backend.search(&query)?;
-    Ok(records.into_iter().map(MemoryEntry::from_record).collect())
+    retrieval_mode: RetrievalMode,
+) -> Result<Vec<MemoryEntry>, CliError> {
+    let query = SearchQuery::new_with_mode(query_text.to_owned(), scope, limit, retrieval_mode)?;
+    let records = backend.search_matches(&query)?;
+    Ok(records
+        .into_iter()
+        .map(MemoryEntry::from_search_match)
+        .collect())
 }
 
 pub(crate) fn record_date(value: SystemTime) -> String {
@@ -231,11 +399,17 @@ fn is_leap_year(year: u32) -> bool {
     (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
 #[cfg(test)]
 mod tests {
     use mnemix_core::{MemoryId, MemoryRecord, RecordedAt, ScopeId, memory::MemoryKind};
 
-    use super::{MemoryEntry, matches_date_range, validate_date_filter};
+    use super::{
+        MemoryEntry, RetrievalMode, VectorSummary, matches_date_range, validate_date_filter,
+    };
 
     fn entry_with_updated_date(updated_at: std::time::SystemTime) -> MemoryEntry {
         let record = MemoryRecord::builder(
@@ -276,5 +450,19 @@ mod tests {
         ));
         assert!(!matches_date_range(&entry, Some("2026-03-31"), None));
         assert!(!matches_date_range(&entry, None, Some("2026-03-29")));
+    }
+
+    #[test]
+    fn vector_summary_reports_unavailable_semantic_modes() {
+        let summary = VectorSummary::from_parts(true, false, false);
+
+        assert!(summary.supports_mode(RetrievalMode::LexicalOnly));
+        assert!(!summary.supports_mode(RetrievalMode::SemanticOnly));
+        assert_eq!(
+            summary.unavailable_reason(RetrievalMode::Hybrid),
+            Some(
+                "Hybrid search unavailable: this CLI session does not have an embedding provider attached.".to_owned()
+            )
+        );
     }
 }

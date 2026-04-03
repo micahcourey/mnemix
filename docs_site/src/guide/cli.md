@@ -200,6 +200,8 @@ mnemix --store .mnemix ui
 
 - **Browse-first view**: See recent and pinned memories immediately.
 - **Search-driven**: Refine the view with text-based search directly in the TUI.
+- **Vector-aware status**: Inspect store vector readiness, coverage, provider availability, and index status without leaving the TUI.
+- **Retrieval-mode selector**: Move between lexical, semantic, and hybrid search modes and see unavailable modes called out explicitly.
 - **Keyboard-first**: Navigate with arrows, filter with keys, and inspect details without leaving the interface.
 - **Time filters**: Use explicit from/to date filters to narrow down your inspection.
 
@@ -226,7 +228,8 @@ Successful commands return structured data under a `kind` and `data` envelope. F
 - `checkpoint` creates a stable, human-readable reference to the current version.
 - `restore` always requires exactly one target: `--checkpoint` or `--version`.
 - `optimize` is conservative by default and only prunes old versions when `--prune` is set.
-- `search` and `recall` remain lexical in the shipped CLI even when a store is vector-enabled.
+- Top-level `search` and `recall` remain lexical in the shipped CLI even when a store is vector-enabled.
+- `mnemix ui` surfaces vector readiness and retrieval-mode availability, but semantic and hybrid execution still require a runtime that opens the store with an embedding provider.
 - `vectors show` is the main inspection command for vector readiness, coverage, and provider availability.
 - `vectors backfill` plans missing embeddings only; `--apply` is intentionally unsupported in the current CLI binary.
 - `remember` supports tags, entities, metadata, and source attribution fields for richer recall and inspection.
