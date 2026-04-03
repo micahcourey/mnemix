@@ -55,6 +55,38 @@ exclude_paths = ["docs/**"]
     .expect("policy config should be written");
 }
 
+fn vectors_show(store: &Path) -> Value {
+    run_json_ok(store, &["vectors", "show"])
+}
+
+fn vectors_enable(store: &Path) -> Value {
+    run_json_ok(
+        store,
+        &[
+            "vectors",
+            "enable",
+            "--model",
+            "test-embedder",
+            "--dimensions",
+            "3",
+        ],
+    )
+}
+
+fn vectors_backfill(store: &Path) -> Value {
+    run_json_ok(store, &["vectors", "backfill"])
+}
+
+fn vectors_backfill_apply_error(store: &Path) -> Value {
+    let assert = cli()
+        .args(["--store", &store.display().to_string(), "--json"])
+        .args(["vectors", "backfill", "--apply"])
+        .assert()
+        .failure();
+
+    serde_json::from_slice(&assert.get_output().stderr).expect("stderr should be valid json")
+}
+
 fn remember_demo_memory(store: &Path) -> Value {
     run_json_ok(
         store,
@@ -138,7 +170,7 @@ fn init_and_full_inspection_flow_outputs_stable_json() {
     let init = init_store(&store);
     assert_eq!(init["kind"], "status");
     assert_eq!(init["data"]["command"], "init");
-    assert_eq!(init["data"]["schema_version"], 1);
+    assert_eq!(init["data"]["schema_version"], 4);
 
     let remember = remember_demo_memory(&store);
     assert_eq!(remember["kind"], "memory");
@@ -212,6 +244,81 @@ fn init_and_full_inspection_flow_outputs_stable_json() {
     assert_eq!(stats["data"]["stats"]["total_memories"], 1);
     assert_eq!(stats["data"]["stats"]["pinned_memories"], 1);
     assert_eq!(stats["data"]["stats"]["latest_checkpoint"], "milestone-3");
+}
+
+#[test]
+fn vector_commands_surface_stable_json_status() {
+    let temp_dir = tempdir().expect("temp dir should be created");
+    let store = temp_dir.path().join("store");
+
+    let _ = init_store(&store);
+
+    let show = vectors_show(&store);
+    assert_eq!(show["kind"], "status");
+    assert_eq!(show["data"]["command"], "vectors show");
+    assert!(
+        show["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("vectors_enabled=false")
+    );
+    assert!(
+        show["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("indexable_embedding_storage=false")
+    );
+    assert!(
+        show["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("embedding_coverage_percent=0")
+    );
+    assert!(
+        show["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("vector_index_available=false")
+    );
+
+    let enable = vectors_enable(&store);
+    assert_eq!(enable["kind"], "status");
+    assert_eq!(enable["data"]["command"], "vectors enable");
+    assert!(
+        enable["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("model=test-embedder")
+    );
+
+    let _ = remember_demo_memory(&store);
+    let show_after_write = vectors_show(&store);
+    assert!(
+        show_after_write["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("embedded_memories=0/1")
+    );
+    let backfill = vectors_backfill(&store);
+    assert_eq!(backfill["kind"], "status");
+    assert_eq!(backfill["data"]["command"], "vectors backfill");
+    assert!(
+        backfill["data"]["message"]
+            .as_str()
+            .expect("string message")
+            .contains("candidate_memories=1")
+    );
+}
+
+#[test]
+fn vector_backfill_apply_reports_unsupported_error() {
+    let temp_dir = tempdir().expect("temp dir should be created");
+    let store = temp_dir.path().join("store");
+
+    let _ = init_store(&store);
+    let error = vectors_backfill_apply_error(&store);
+    assert_eq!(error["kind"], "error");
+    assert_eq!(error["code"], "vector_backfill_apply_unsupported");
 }
 
 #[test]
