@@ -71,12 +71,12 @@ fn enable(store_path: &Path, args: &VectorEnableArgs) -> Result<CommandOutput, C
 }
 
 fn backfill(store_path: &Path, args: &VectorBackfillArgs) -> Result<CommandOutput, CliError> {
+    if args.apply {
+        return Err(CliError::VectorBackfillApplyUnsupported);
+    }
+
     let mut backend = open_store(store_path)?;
-    let request = if args.apply {
-        EmbeddingBackfillRequest::apply()
-    } else {
-        EmbeddingBackfillRequest::plan()
-    };
+    let request = EmbeddingBackfillRequest::plan();
     let result = backend.backfill_embeddings(&request)?;
 
     Ok(status_result(

@@ -37,6 +37,9 @@ pub(crate) enum CliError {
     #[error("store `{path}` has not been initialized; run `mnemix init` first")]
     StoreNotInitialized { path: PathBuf },
 
+    #[error("`mnemix vectors backfill --apply` is not supported yet because the shipped CLI does not expose an embedding provider")]
+    VectorBackfillApplyUnsupported,
+
     #[error("`mnemix ui` does not support `--json`")]
     UiJsonUnsupported,
 }
@@ -54,6 +57,7 @@ impl CliError {
             Self::MemoryNotFound { .. } => "memory_not_found",
             Self::ScopedHistoryNotSupported => "scoped_history_not_supported",
             Self::StoreNotInitialized { .. } => "store_not_initialized",
+            Self::VectorBackfillApplyUnsupported => "vector_backfill_apply_unsupported",
             Self::UiJsonUnsupported => "ui_json_unsupported",
         }
     }

@@ -2,7 +2,7 @@
 
 use std::{
     cmp::Ordering,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -552,6 +552,12 @@ struct PersistedEmbedding {
 }
 
 #[derive(Clone, Debug)]
+struct StoredMemoryRecord {
+    record: MemoryRecord,
+    embedding: Option<PersistedEmbedding>,
+}
+
+#[derive(Clone, Debug)]
 struct SemanticCandidate {
     record: MemoryRecord,
     score: f32,
@@ -782,7 +788,8 @@ impl LanceDbBackend {
             });
         }
 
-        let candidate_memories = self.count_memories(None)? as u64;
+        let candidates = self.backfill_candidate_records()?;
+        let candidate_memories = candidates.len() as u64;
         if !request.apply_writes() {
             return Ok(EmbeddingBackfillResult::new(false, candidate_memories, 0));
         }
@@ -793,10 +800,8 @@ impl LanceDbBackend {
             }));
         }
 
-        let records =
-            decode_memory_records(self.query_payloads(&self.memories, None, None, None)?)?;
         let mut updated_memories = 0_u64;
-        for record in &records {
+        for record in &candidates {
             if let Some(embedding) = self.embedding_for_record(record)? {
                 self.update_memory_embedding(record.id(), &embedding)?;
                 self.upsert_fixed_size_memory_embedding(record.id(), &embedding)?;
@@ -809,6 +814,28 @@ impl LanceDbBackend {
             candidate_memories,
             updated_memories,
         ))
+    }
+
+    fn backfill_candidate_records(&self) -> Result<Vec<MemoryRecord>, LanceDbError> {
+        if self.supports_indexable_embedding_storage() {
+            let fixed_embedding_ids = self
+                .fixed_size_embedding_ids()?
+                .into_iter()
+                .collect::<HashSet<_>>();
+            let records =
+                decode_memory_records(self.query_payloads(&self.memories, None, None, None)?)?;
+            return Ok(records
+                .into_iter()
+                .filter(|record| !fixed_embedding_ids.contains(record.id().as_str()))
+                .collect());
+        }
+
+        decode_memory_records(self.query_payloads(
+            &self.memories,
+            Some("embedding_model IS NULL".to_owned()),
+            None,
+            None,
+        )?)
     }
 
     fn read_schema_version(&self) -> Result<u64, LanceDbError> {
@@ -1539,10 +1566,12 @@ impl LanceDbBackend {
         }
 
         if self.supports_indexable_embedding_storage() {
-            let Some(table) = self.memory_embeddings.as_ref() else {
+            let ids = self.fixed_size_embedding_ids()?;
+            if ids.is_empty() {
                 return Ok(0);
-            };
-            return self.block_on(table.count_rows(None));
+            }
+
+            return Ok(self.query_memory_records_by_ids(&ids, None)?.len());
         }
 
         self.count_memories(Some("embedding_model IS NOT NULL".to_owned()))
@@ -1735,6 +1764,162 @@ impl LanceDbBackend {
         }
 
         Ok(records)
+    }
+
+    fn read_stored_memory_records(
+        &self,
+        table: &Table,
+        schema_version: u64,
+        filter: Option<String>,
+    ) -> Result<Vec<StoredMemoryRecord>, LanceDbError> {
+        let mut columns = vec![PAYLOAD_COLUMN.to_owned()];
+        if schema_version > LEGACY_SCHEMA_VERSION {
+            columns.extend([
+                "embedding_model".to_owned(),
+                "embedding_dimensions".to_owned(),
+                "embedding_updated_at_secs".to_owned(),
+                "embedding_updated_at_nanos".to_owned(),
+                "embedding".to_owned(),
+            ]);
+        }
+
+        let batches = self.block_on(async {
+            let mut query = table.query().select(Select::Columns(columns));
+            if let Some(filter) = filter {
+                query = query.only_if(filter);
+            }
+
+            let stream: SendableRecordBatchStream = query.execute().await?;
+            let batches: Vec<RecordBatch> = stream.try_collect().await?;
+            Ok::<Vec<RecordBatch>, lancedb::Error>(batches)
+        })?;
+
+        let mut records = Vec::new();
+        for batch in batches {
+            let Some(payloads) = batch
+                .column_by_name(PAYLOAD_COLUMN)
+                .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+            else {
+                return Err(LanceDbError::InvalidData {
+                    field: PAYLOAD_COLUMN,
+                    details: "expected Utf8 payload column".to_owned(),
+                });
+            };
+
+            for index in 0..payloads.len() {
+                if payloads.is_null(index) {
+                    return Err(LanceDbError::InvalidData {
+                        field: PAYLOAD_COLUMN,
+                        details: "payload column contained null".to_owned(),
+                    });
+                }
+
+                records.push(StoredMemoryRecord {
+                    record: serde_json::from_str::<MemoryRecord>(payloads.value(index))?,
+                    embedding: persisted_embedding_from_memory_batch(
+                        &batch,
+                        index,
+                        schema_version,
+                    )?,
+                });
+            }
+        }
+
+        Ok(records)
+    }
+
+    fn fixed_size_embedding_ids(&self) -> Result<Vec<String>, LanceDbError> {
+        let Some(table) = self.memory_embeddings.as_ref() else {
+            return Ok(Vec::new());
+        };
+
+        let batches = self.block_on(async {
+            let stream: SendableRecordBatchStream = table
+                .query()
+                .select(Select::Columns(vec!["memory_id".to_owned()]))
+                .execute()
+                .await?;
+            let batches: Vec<RecordBatch> = stream.try_collect().await?;
+            Ok::<Vec<RecordBatch>, lancedb::Error>(batches)
+        })?;
+
+        let mut ids = Vec::new();
+        for batch in batches {
+            let Some(array) = batch
+                .column_by_name("memory_id")
+                .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+            else {
+                return Err(LanceDbError::InvalidData {
+                    field: "memory_id",
+                    details: "expected Utf8 memory_id column".to_owned(),
+                });
+            };
+
+            for index in 0..array.len() {
+                if array.is_null(index) {
+                    return Err(LanceDbError::InvalidData {
+                        field: "memory_id",
+                        details: "memory_id column contained null".to_owned(),
+                    });
+                }
+                ids.push(array.value(index).to_owned());
+            }
+        }
+
+        Ok(ids)
+    }
+
+    fn fixed_size_embeddings_by_id(
+        &self,
+    ) -> Result<HashMap<String, PersistedEmbedding>, LanceDbError> {
+        let Some(table) = self.memory_embeddings.as_ref() else {
+            return Ok(HashMap::new());
+        };
+
+        let batches = self.block_on(async {
+            let stream: SendableRecordBatchStream = table
+                .query()
+                .select(Select::Columns(vec![
+                    "memory_id".to_owned(),
+                    "embedding_model".to_owned(),
+                    "embedding_updated_at_secs".to_owned(),
+                    "embedding_updated_at_nanos".to_owned(),
+                    "embedding".to_owned(),
+                ]))
+                .execute()
+                .await?;
+            let batches: Vec<RecordBatch> = stream.try_collect().await?;
+            Ok::<Vec<RecordBatch>, lancedb::Error>(batches)
+        })?;
+
+        let mut embeddings = HashMap::new();
+        for batch in batches {
+            let Some(ids) = batch
+                .column_by_name("memory_id")
+                .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+            else {
+                return Err(LanceDbError::InvalidData {
+                    field: "memory_id",
+                    details: "expected Utf8 memory_id column".to_owned(),
+                });
+            };
+
+            for index in 0..ids.len() {
+                if ids.is_null(index) {
+                    return Err(LanceDbError::InvalidData {
+                        field: "memory_id",
+                        details: "memory_id column contained null".to_owned(),
+                    });
+                }
+
+                embeddings.insert(
+                    ids.value(index).to_owned(),
+                    persisted_embedding_from_fixed_size_batch(&batch, index)?,
+                );
+            }
+        }
+
+        Ok(embeddings)
     }
 
     fn query_embedded_memories_from_memories(
@@ -2119,6 +2304,12 @@ impl LanceDbBackend {
         let memories_uri = self.table_uri(&self.memories)?;
         let checkpoints_uri = self.table_uri(&self.checkpoints)?;
         let schema_metadata_uri = self.table_uri(&self.schema_metadata)?;
+        let vector_config_uri = self.table_uri(&self.vector_config)?;
+        let memory_embeddings_uri = self
+            .memory_embeddings
+            .as_ref()
+            .map(|table| self.table_uri(table))
+            .transpose()?;
 
         let cloned_memories_uri = Self::clone_destination_uri(destination, MEMORIES_TABLE);
 
@@ -2133,6 +2324,18 @@ impl LanceDbBackend {
             &Self::clone_destination_uri(destination, SCHEMA_METADATA_TABLE),
             kind,
         )?;
+        self.clone_table_dataset(
+            &vector_config_uri,
+            &Self::clone_destination_uri(destination, VECTOR_CONFIG_TABLE),
+            kind,
+        )?;
+        if let Some(memory_embeddings_uri) = memory_embeddings_uri.as_deref() {
+            self.clone_table_dataset(
+                memory_embeddings_uri,
+                &Self::clone_destination_uri(destination, MEMORY_EMBEDDINGS_TABLE),
+                kind,
+            )?;
+        }
 
         let cloned_backend = Self::open(destination)?;
         let versions: Vec<_> = cloned_backend.block_on(cloned_backend.memories.list_versions())?;
@@ -2145,53 +2348,44 @@ impl LanceDbBackend {
     }
 
     fn stage_import_records(
-        &self,
+        &mut self,
+        source_backend: &LanceDbBackend,
         source_table: &Table,
         branch_table: &Table,
     ) -> Result<u64, LanceDbError> {
-        self.block_on_backend(async {
-            let mut staged_records = 0_u64;
-            let stream: SendableRecordBatchStream = source_table
-                .query()
-                .select(Select::Columns(vec![PAYLOAD_COLUMN.to_owned()]))
-                .execute()
-                .await?;
-            let batches: Vec<RecordBatch> = stream.try_collect().await?;
+        let source_records = source_backend.read_stored_memory_records(
+            source_table,
+            source_backend.schema_version,
+            None,
+        )?;
+        let source_fixed_embeddings = source_backend.fixed_size_embeddings_by_id()?;
 
-            for batch in batches {
-                let Some(array): Option<&StringArray> = batch
-                    .column_by_name(PAYLOAD_COLUMN)
-                    .and_then(|column: &Arc<dyn Array>| {
-                        column.as_any().downcast_ref::<StringArray>()
-                    })
-                else {
-                    return Err(LanceDbError::InvalidData {
-                        field: PAYLOAD_COLUMN,
-                        details: "expected Utf8 payload column".to_owned(),
-                    });
-                };
-
-                for index in 0..array.len() {
-                    if array.is_null(index) {
-                        return Err(LanceDbError::InvalidData {
-                            field: PAYLOAD_COLUMN,
-                            details: "null payload value".to_owned(),
-                        });
-                    }
-
-                    let record = serde_json::from_str::<MemoryRecord>(array.value(index))?;
-                    if table_contains_memory_id_async(branch_table, record.id()).await? {
-                        continue;
-                    }
-
-                    insert_memory_record_async(branch_table, &record, self.schema_version, None)
-                        .await?;
-                    staged_records += 1;
-                }
+        let mut staged_records = 0_u64;
+        for stored in source_records {
+            if self
+                .block_on_backend(table_contains_memory_id_async(branch_table, stored.record.id()))?
+            {
+                continue;
             }
 
-            Ok(staged_records)
-        })
+            self.block_on_backend(insert_memory_record_async(
+                branch_table,
+                &stored.record,
+                self.schema_version,
+                stored.embedding.as_ref(),
+            ))?;
+
+            if self.schema_version >= INDEXABLE_EMBEDDING_SCHEMA_VERSION
+                && let Some(embedding) = source_fixed_embeddings.get(stored.record.id().as_str())
+            {
+                self.ensure_memory_embeddings_table(embedding.dimensions)?;
+                self.upsert_fixed_size_memory_embedding(stored.record.id(), embedding)?;
+            }
+
+            staged_records += 1;
+        }
+
+        Ok(staged_records)
     }
 
     fn query_payloads(
@@ -2650,7 +2844,7 @@ impl AdvancedStorageBackend for LanceDbBackend {
         let branch_record = self.create_branch(&BranchRequest::new(branch_name.clone()))?;
         let staged_records = match (|| {
             let branch_table = self.open_branch_memories_table(branch_record.name())?;
-            self.stage_import_records(&source_backend.memories, &branch_table)
+            self.stage_import_records(&source_backend, &source_backend.memories, &branch_table)
         })() {
             Ok(staged_records) => staged_records,
             Err(error) => {
@@ -3104,6 +3298,178 @@ fn memory_embedding_batch(
     Ok((schema, batch))
 }
 
+fn persisted_embedding_from_memory_batch(
+    batch: &RecordBatch,
+    index: usize,
+    schema_version: u64,
+) -> Result<Option<PersistedEmbedding>, LanceDbError> {
+    if schema_version <= LEGACY_SCHEMA_VERSION {
+        return Ok(None);
+    }
+
+    let Some(models) = batch
+        .column_by_name("embedding_model")
+        .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_model",
+            details: "expected Utf8 embedding_model column".to_owned(),
+        });
+    };
+    let Some(dimensions) = batch
+        .column_by_name("embedding_dimensions")
+        .and_then(|column| column.as_any().downcast_ref::<UInt32Array>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_dimensions",
+            details: "expected UInt32 embedding_dimensions column".to_owned(),
+        });
+    };
+    let Some(updated_secs) = batch
+        .column_by_name("embedding_updated_at_secs")
+        .and_then(|column| column.as_any().downcast_ref::<UInt64Array>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_updated_at_secs",
+            details: "expected UInt64 embedding_updated_at_secs column".to_owned(),
+        });
+    };
+    let Some(updated_nanos) = batch
+        .column_by_name("embedding_updated_at_nanos")
+        .and_then(|column| column.as_any().downcast_ref::<UInt32Array>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_updated_at_nanos",
+            details: "expected UInt32 embedding_updated_at_nanos column".to_owned(),
+        });
+    };
+    let Some(embeddings) = batch
+        .column_by_name("embedding")
+        .and_then(|column| column.as_any().downcast_ref::<ListArray>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding",
+            details: "expected List<Float32> embedding column".to_owned(),
+        });
+    };
+
+    let has_embedding = !models.is_null(index)
+        || !dimensions.is_null(index)
+        || !updated_secs.is_null(index)
+        || !updated_nanos.is_null(index)
+        || !embeddings.is_null(index);
+    if !has_embedding {
+        return Ok(None);
+    }
+    if models.is_null(index)
+        || dimensions.is_null(index)
+        || updated_secs.is_null(index)
+        || updated_nanos.is_null(index)
+        || embeddings.is_null(index)
+    {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding",
+            details: "embedding columns must be populated together".to_owned(),
+        });
+    }
+
+    Ok(Some(PersistedEmbedding {
+        model: models.value(index).to_owned(),
+        dimensions: dimensions.value(index),
+        updated_at: parts_to_system_time(
+            updated_secs.value(index),
+            updated_nanos.value(index),
+            "embedding_updated_at",
+        )?,
+        values: embeddings
+            .value(index)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or(LanceDbError::InvalidData {
+                field: "embedding",
+                details: "embedding values must be Float32".to_owned(),
+            })?
+            .values()
+            .to_vec(),
+    }))
+}
+
+fn persisted_embedding_from_fixed_size_batch(
+    batch: &RecordBatch,
+    index: usize,
+) -> Result<PersistedEmbedding, LanceDbError> {
+    let Some(models) = batch
+        .column_by_name("embedding_model")
+        .and_then(|column| column.as_any().downcast_ref::<StringArray>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_model",
+            details: "expected Utf8 embedding_model column".to_owned(),
+        });
+    };
+    let Some(updated_secs) = batch
+        .column_by_name("embedding_updated_at_secs")
+        .and_then(|column| column.as_any().downcast_ref::<UInt64Array>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_updated_at_secs",
+            details: "expected UInt64 embedding_updated_at_secs column".to_owned(),
+        });
+    };
+    let Some(updated_nanos) = batch
+        .column_by_name("embedding_updated_at_nanos")
+        .and_then(|column| column.as_any().downcast_ref::<UInt32Array>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding_updated_at_nanos",
+            details: "expected UInt32 embedding_updated_at_nanos column".to_owned(),
+        });
+    };
+    let Some(embeddings) = batch
+        .column_by_name("embedding")
+        .and_then(|column| column.as_any().downcast_ref::<FixedSizeListArray>())
+    else {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding",
+            details: "expected FixedSizeList<Float32> embedding column".to_owned(),
+        });
+    };
+    if models.is_null(index)
+        || updated_secs.is_null(index)
+        || updated_nanos.is_null(index)
+        || embeddings.is_null(index)
+    {
+        return Err(LanceDbError::InvalidData {
+            field: "embedding",
+            details: "fixed-size embedding row contained null values".to_owned(),
+        });
+    }
+
+    Ok(PersistedEmbedding {
+        model: models.value(index).to_owned(),
+        dimensions: u32::try_from(embeddings.value_length()).map_err(|_| {
+            LanceDbError::InvalidVectorSettings {
+                details: "fixed-size embedding dimensions exceeded supported size".to_owned(),
+            }
+        })?,
+        updated_at: parts_to_system_time(
+            updated_secs.value(index),
+            updated_nanos.value(index),
+            "embedding_updated_at",
+        )?,
+        values: embeddings
+            .value(index)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .ok_or(LanceDbError::InvalidData {
+                field: "embedding",
+                details: "fixed-size embedding values must be Float32".to_owned(),
+            })?
+            .values()
+            .to_vec(),
+    })
+}
+
 fn string_filter(column: &str, value: &str) -> String {
     format!("{column} = '{}'", sql_escape(value))
 }
@@ -3554,6 +3920,16 @@ fn system_time_to_parts(
     Ok((duration.as_secs(), duration.subsec_nanos()))
 }
 
+fn parts_to_system_time(
+    secs: u64,
+    nanos: u32,
+    field: &'static str,
+) -> Result<SystemTime, LanceDbError> {
+    UNIX_EPOCH
+        .checked_add(Duration::new(secs, nanos))
+        .ok_or(LanceDbError::InvalidTimestamp { field })
+}
+
 fn memory_kind_name(kind: MemoryKind) -> &'static str {
     match kind {
         MemoryKind::Observation => "observation",
@@ -3700,14 +4076,14 @@ mod tests {
         (temp_dir, backend)
     }
 
-    fn embedding_snapshot(
+    fn embedding_snapshot_for_table(
         backend: &LanceDbBackend,
+        table: &Table,
         id: &str,
     ) -> (Option<String>, Option<u32>, Option<Vec<f32>>) {
         let batches = backend
             .block_on(async {
-                let stream: SendableRecordBatchStream = backend
-                    .memories
+                let stream: SendableRecordBatchStream = table
                     .query()
                     .select(Select::Columns(vec![
                         "embedding_model".to_owned(),
@@ -3748,6 +4124,13 @@ mod tests {
             });
 
         (model, dimensions, values)
+    }
+
+    fn embedding_snapshot(
+        backend: &LanceDbBackend,
+        id: &str,
+    ) -> (Option<String>, Option<u32>, Option<Vec<f32>>) {
+        embedding_snapshot_for_table(backend, &backend.memories, id)
     }
 
     fn fixed_size_embedding_snapshot(
@@ -4300,6 +4683,54 @@ mod tests {
             fixed_size_embedding_snapshot(&backend, "memory:backfill-apply");
         assert_eq!(fixed_model.as_deref(), Some("test-embedder"));
         assert_eq!(fixed_embedding, Some(vec![expected_value; 3]));
+    }
+
+    #[test]
+    fn backfill_only_targets_missing_embeddings() {
+        let temp_dir = TempDir::new().expect("tempdir should be created");
+        let mut backend = LanceDbBackend::init_with_options(
+            temp_dir.path(),
+            LanceDbOpenOptions::new().embedding_provider(Arc::new(TestEmbeddingProvider {
+                model_id: "test-embedder",
+                dimensions: 3,
+            })),
+        )
+        .expect("backend should initialize");
+        backend
+            .remember(build_memory(
+                "memory:needs-backfill",
+                "repo:mnemix",
+                "Needs backfill",
+                "Stored before vectors were enabled.",
+            ))
+            .expect("pre-vector memory should store");
+        backend
+            .enable_vectors(
+                &VectorEnableRequest::new("test-embedder", 3)
+                    .expect("enable request should build")
+                    .with_auto_embed_on_write(true),
+            )
+            .expect("vector enablement should succeed");
+        backend
+            .remember(build_memory(
+                "memory:already-embedded",
+                "repo:mnemix",
+                "Already embedded",
+                "Stored after vectors were enabled.",
+            ))
+            .expect("post-vector memory should store");
+
+        let plan = backend
+            .backfill_embeddings(&EmbeddingBackfillRequest::plan())
+            .expect("backfill plan should succeed");
+        assert_eq!(plan.candidate_memories(), 1);
+        assert_eq!(plan.updated_memories(), 0);
+
+        let apply = backend
+            .backfill_embeddings(&EmbeddingBackfillRequest::apply())
+            .expect("backfill apply should succeed");
+        assert_eq!(apply.candidate_memories(), 1);
+        assert_eq!(apply.updated_memories(), 1);
     }
 
     #[test]
@@ -5275,6 +5706,52 @@ mod tests {
     }
 
     #[test]
+    fn staged_import_preserves_embeddings_for_imported_memories() {
+        let source_dir = TempDir::new().expect("tempdir should be created");
+        let mut source = LanceDbBackend::init_with_options(
+            source_dir.path(),
+            LanceDbOpenOptions::new().embedding_provider(Arc::new(TestEmbeddingProvider {
+                model_id: "test-embedder",
+                dimensions: 3,
+            })),
+        )
+        .expect("source backend should initialize");
+        source
+            .enable_vectors(
+                &VectorEnableRequest::new("test-embedder", 3)
+                    .expect("enable request should build")
+                    .with_auto_embed_on_write(true),
+            )
+            .expect("source vector enablement should succeed");
+        source
+            .remember(build_memory(
+                "memory:import-embedded",
+                "repo:import-source",
+                "Imported memory",
+                "Should keep persisted embeddings on the staging branch.",
+            ))
+            .expect("source memory should store");
+
+        let (_target_dir, mut target) = new_backend();
+        let staged = target
+            .stage_import(&ImportStageRequest::new(source.path()).with_branch_name(
+                BranchName::try_from("imports/with-embeddings").expect("valid branch name"),
+            ))
+            .expect("import should stage");
+        let branch_table = branch_table(&target, staged.branch_name());
+
+        let (model, dimensions, embedding) =
+            embedding_snapshot_for_table(&target, &branch_table, "memory:import-embedded");
+        assert_eq!(model.as_deref(), Some("test-embedder"));
+        assert_eq!(dimensions, Some(3));
+        assert!(embedding.is_some());
+        let (fixed_model, fixed_embedding) =
+            fixed_size_embedding_snapshot(&target, "memory:import-embedded");
+        assert_eq!(fixed_model.as_deref(), Some("test-embedder"));
+        assert!(fixed_embedding.is_some());
+    }
+
+    #[test]
     fn staged_import_rejects_missing_source_path() {
         let (_temp_dir, mut backend) = new_backend();
         let missing_path = std::env::temp_dir().join("mnemix-m7-missing-source-store");
@@ -5378,6 +5855,49 @@ mod tests {
             .expect("cloned history should load");
 
         assert_eq!(cloned_history.len(), source_history.len());
+    }
+
+    #[test]
+    fn export_store_preserves_vector_state_and_fixed_embeddings() {
+        let temp_dir = TempDir::new().expect("tempdir should be created");
+        let mut backend = LanceDbBackend::init_with_options(
+            temp_dir.path(),
+            LanceDbOpenOptions::new().embedding_provider(Arc::new(TestEmbeddingProvider {
+                model_id: "test-embedder",
+                dimensions: 3,
+            })),
+        )
+        .expect("backend should initialize");
+        backend
+            .enable_vectors(
+                &VectorEnableRequest::new("test-embedder", 3)
+                    .expect("enable request should build")
+                    .with_auto_embed_on_write(true),
+            )
+            .expect("vector enablement should succeed");
+        backend
+            .remember(build_memory(
+                "memory:export-embedded",
+                "repo:mnemix",
+                "Embedded export memory",
+                "Export should preserve vector state and fixed embeddings.",
+            ))
+            .expect("memory should store");
+
+        let export_dir = TempDir::new().expect("tempdir should be created");
+        let export_path = export_dir.path().join("export-store");
+        backend
+            .export_store(&export_path)
+            .expect("export should succeed");
+
+        let exported = LanceDbBackend::open(&export_path).expect("exported store should open");
+        assert!(exported.vector_settings().vectors_enabled());
+        assert_eq!(exported.vector_settings().embedding_model(), Some("test-embedder"));
+        assert_eq!(exported.vector_settings().embedding_dimensions(), Some(3));
+        let (fixed_model, fixed_embedding) =
+            fixed_size_embedding_snapshot(&exported, "memory:export-embedded");
+        assert_eq!(fixed_model.as_deref(), Some("test-embedder"));
+        assert!(fixed_embedding.is_some());
     }
 
     #[test]

@@ -77,6 +77,16 @@ fn vectors_backfill(store: &Path) -> Value {
     run_json_ok(store, &["vectors", "backfill"])
 }
 
+fn vectors_backfill_apply_error(store: &Path) -> Value {
+    let assert = cli()
+        .args(["--store", &store.display().to_string(), "--json"])
+        .args(["vectors", "backfill", "--apply"])
+        .assert()
+        .failure();
+
+    serde_json::from_slice(&assert.get_output().stderr).expect("stderr should be valid json")
+}
+
 fn remember_demo_memory(store: &Path) -> Value {
     run_json_ok(
         store,
@@ -298,6 +308,17 @@ fn vector_commands_surface_stable_json_status() {
             .expect("string message")
             .contains("candidate_memories=1")
     );
+}
+
+#[test]
+fn vector_backfill_apply_reports_unsupported_error() {
+    let temp_dir = tempdir().expect("temp dir should be created");
+    let store = temp_dir.path().join("store");
+
+    let _ = init_store(&store);
+    let error = vectors_backfill_apply_error(&store);
+    assert_eq!(error["kind"], "error");
+    assert_eq!(error["code"], "vector_backfill_apply_unsupported");
 }
 
 #[test]
