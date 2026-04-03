@@ -33,8 +33,7 @@ fn show(store_path: &Path) -> Result<CommandOutput, CliError> {
             settings.embedding_model().unwrap_or("<none>"),
             settings
                 .embedding_dimensions()
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "<none>".to_owned()),
+                .map_or_else(|| "<none>".to_owned(), |value| value.to_string()),
             status.has_embedding_provider(),
             status.can_embed_on_write(),
             status.semantic_retrieval_available(),

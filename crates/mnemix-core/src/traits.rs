@@ -232,32 +232,6 @@ pub trait RecallBackend: StorageBackend {
     fn search(&self, query: &SearchQuery) -> Result<Vec<MemoryRecord>, Self::Error>;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{BackendCapabilities, BackendCapability};
-
-    #[test]
-    fn capability_helpers_detect_semantic_search_support() {
-        let capabilities = BackendCapabilities::new([
-            BackendCapability::Search,
-            BackendCapability::SemanticSearch,
-        ]);
-
-        assert!(capabilities.supports_search());
-        assert!(capabilities.supports_semantic_search());
-        assert!(!capabilities.supports_hybrid_search());
-    }
-
-    #[test]
-    fn capability_helpers_detect_hybrid_search_support() {
-        let capabilities =
-            BackendCapabilities::new([BackendCapability::Search, BackendCapability::HybridSearch]);
-
-        assert!(capabilities.supports_hybrid_search());
-        assert!(!capabilities.supports_semantic_search());
-    }
-}
-
 /// Supports history inspection and version listing.
 pub trait HistoryBackend: StorageBackend {
     /// Returns version records matching a history request.
@@ -371,4 +345,30 @@ pub trait StatsBackend: StorageBackend {
     /// Returns [`Self::Error`](StorageBackend::Error) when stats inspection is
     /// unsupported or fails.
     fn stats(&self, query: &StatsQuery) -> Result<StatsSnapshot, Self::Error>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BackendCapabilities, BackendCapability};
+
+    #[test]
+    fn capability_helpers_detect_semantic_search_support() {
+        let capabilities = BackendCapabilities::new([
+            BackendCapability::Search,
+            BackendCapability::SemanticSearch,
+        ]);
+
+        assert!(capabilities.supports_search());
+        assert!(capabilities.supports_semantic_search());
+        assert!(!capabilities.supports_hybrid_search());
+    }
+
+    #[test]
+    fn capability_helpers_detect_hybrid_search_support() {
+        let capabilities =
+            BackendCapabilities::new([BackendCapability::Search, BackendCapability::HybridSearch]);
+
+        assert!(capabilities.supports_hybrid_search());
+        assert!(!capabilities.supports_semantic_search());
+    }
 }

@@ -236,7 +236,7 @@ pub trait EmbeddingProvider: Send + Sync {
     fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingProviderError>;
 }
 
-/// Store-level vector configuration persisted by the LanceDB backend.
+/// Store-level vector configuration persisted by the `LanceDB` backend.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct VectorSettings {
     vectors_enabled: bool,
@@ -267,6 +267,7 @@ impl VectorIndexStatus {
 }
 
 /// Store-level vector runtime and coverage snapshot.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VectorStatus {
     settings: VectorSettings,
@@ -582,11 +583,7 @@ impl std::fmt::Debug for LanceDbBackend {
             )
             .field(
                 "has_embedding_provider",
-                &self
-                    .embedding_provider
-                    .as_ref()
-                    .map(|_| true)
-                    .unwrap_or(false),
+                &self.embedding_provider.as_ref().is_some_and(|_| true),
             )
             .finish_non_exhaustive()
     }
@@ -1403,26 +1400,26 @@ impl LanceDbBackend {
             return Ok(());
         };
 
-        if let Some(model) = settings.embedding_model() {
-            if model != provider.model_id() {
-                return Err(LanceDbError::InvalidVectorSettings {
-                    details: format!(
-                        "configured embedding model `{model}` does not match provider `{}`",
-                        provider.model_id()
-                    ),
-                });
-            }
+        if let Some(model) = settings.embedding_model()
+            && model != provider.model_id()
+        {
+            return Err(LanceDbError::InvalidVectorSettings {
+                details: format!(
+                    "configured embedding model `{model}` does not match provider `{}`",
+                    provider.model_id()
+                ),
+            });
         }
 
-        if let Some(dimensions) = settings.embedding_dimensions() {
-            if dimensions != provider.dimensions() {
-                return Err(LanceDbError::InvalidVectorSettings {
-                    details: format!(
-                        "configured embedding dimensions `{dimensions}` do not match provider `{}`",
-                        provider.dimensions()
-                    ),
-                });
-            }
+        if let Some(dimensions) = settings.embedding_dimensions()
+            && dimensions != provider.dimensions()
+        {
+            return Err(LanceDbError::InvalidVectorSettings {
+                details: format!(
+                    "configured embedding dimensions `{dimensions}` do not match provider `{}`",
+                    provider.dimensions()
+                ),
+            });
         }
 
         Ok(())
@@ -3311,7 +3308,7 @@ fn fixed_size_embedding_array(values: &[f32], dimensions: u32) -> FixedSizeListA
                 .map(Some)
                 .collect::<Vec<Option<f32>>>(),
         )],
-        dimensions as i32,
+        i32::try_from(dimensions).expect("fixed-size embedding dimensions should fit within i32"),
     )
 }
 
@@ -3343,7 +3340,10 @@ fn cosine_similarity(left: &[f32], right: &[f32]) -> Option<f32> {
 }
 
 fn reciprocal_rank(rank: Option<usize>) -> f32 {
-    rank.map_or(0.0, |value| 1.0 / (10.0 + value as f32))
+    rank.map_or(0.0, |value| {
+        let value = u16::try_from(value).expect("rank should fit within u16");
+        1.0 / (10.0 + f32::from(value))
+    })
 }
 
 fn semantic_candidate_cmp(left: &SemanticCandidate, right: &SemanticCandidate) -> Ordering {
@@ -3614,14 +3614,17 @@ mod tests {
         }
 
         fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingProviderError> {
-            Ok(vec![text.len() as f32; self.dimensions as usize])
+            let value = text_len_value(text);
+            let dimensions =
+                usize::try_from(self.dimensions).expect("dimensions should fit within usize");
+            Ok(vec![value; dimensions])
         }
     }
 
     struct SemanticTestEmbeddingProvider;
 
     impl EmbeddingProvider for SemanticTestEmbeddingProvider {
-        fn model_id(&self) -> &str {
+        fn model_id(&self) -> &'static str {
             "semantic-test"
         }
 
@@ -3814,9 +3817,14 @@ mod tests {
 
     fn write_vector_settings(
         backend: &LanceDbBackend,
-        settings: VectorSettings,
+        settings: &VectorSettings,
     ) -> Result<(), LanceDbError> {
-        backend.write_vector_settings(&settings)
+        backend.write_vector_settings(settings)
+    }
+
+    fn text_len_value(text: &str) -> f32 {
+        let len = u16::try_from(text.len()).expect("test text length should fit within u16");
+        f32::from(len)
     }
 
     fn init_legacy_store(path: &Path) {
@@ -4033,7 +4041,7 @@ mod tests {
             "Auto embedded memory",
             "Remember writes should persist embedding values when enabled.",
         );
-        let expected_value = memory.fts_text().len() as f32;
+        let expected_value = text_len_value(memory.fts_text());
         backend
             .remember(memory)
             .expect("memory should store with embedding");
@@ -4266,7 +4274,7 @@ mod tests {
             "Backfill target",
             "Apply mode should persist embeddings for existing rows.",
         );
-        let expected_value = memory.fts_text().len() as f32;
+        let expected_value = text_len_value(memory.fts_text());
         backend
             .remember(memory)
             .expect("memory should store before enablement");
@@ -4502,7 +4510,7 @@ mod tests {
             embedding_model: Some("test-embedder".to_string()),
             embedding_dimensions: Some(3),
         };
-        write_vector_settings(&backend, settings.clone()).expect("vector settings should persist");
+        write_vector_settings(&backend, &settings).expect("vector settings should persist");
         drop(backend);
 
         let backend = LanceDbBackend::open_with_options(
@@ -4525,7 +4533,7 @@ mod tests {
         let backend = LanceDbBackend::init(temp_dir.path()).expect("backend should initialize");
         write_vector_settings(
             &backend,
-            VectorSettings {
+            &VectorSettings {
                 vectors_enabled: true,
                 auto_embed_on_write: true,
                 embedding_model: Some("expected-model".to_string()),
@@ -4556,7 +4564,7 @@ mod tests {
         let backend = LanceDbBackend::init(temp_dir.path()).expect("backend should initialize");
         write_vector_settings(
             &backend,
-            VectorSettings {
+            &VectorSettings {
                 vectors_enabled: true,
                 auto_embed_on_write: true,
                 embedding_model: Some("test-embedder".to_string()),
@@ -4577,7 +4585,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(LanceDbError::InvalidVectorSettings { details })
-            if details.contains("8") && details.contains("3")
+            if details.contains('8') && details.contains('3')
         ));
     }
 
@@ -4587,7 +4595,7 @@ mod tests {
         let backend = LanceDbBackend::init(temp_dir.path()).expect("backend should initialize");
         write_vector_settings(
             &backend,
-            VectorSettings {
+            &VectorSettings {
                 vectors_enabled: false,
                 auto_embed_on_write: true,
                 embedding_model: None,
