@@ -2362,9 +2362,10 @@ impl LanceDbBackend {
 
         let mut staged_records = 0_u64;
         for stored in source_records {
-            if self
-                .block_on_backend(table_contains_memory_id_async(branch_table, stored.record.id()))?
-            {
+            if self.block_on_backend(table_contains_memory_id_async(
+                branch_table,
+                stored.record.id(),
+            ))? {
                 continue;
             }
 
@@ -5892,7 +5893,10 @@ mod tests {
 
         let exported = LanceDbBackend::open(&export_path).expect("exported store should open");
         assert!(exported.vector_settings().vectors_enabled());
-        assert_eq!(exported.vector_settings().embedding_model(), Some("test-embedder"));
+        assert_eq!(
+            exported.vector_settings().embedding_model(),
+            Some("test-embedder")
+        );
         assert_eq!(exported.vector_settings().embedding_dimensions(), Some(3));
         let (fixed_model, fixed_embedding) =
             fixed_size_embedding_snapshot(&exported, "memory:export-embedded");

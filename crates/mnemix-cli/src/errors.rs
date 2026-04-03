@@ -37,7 +37,9 @@ pub(crate) enum CliError {
     #[error("store `{path}` has not been initialized; run `mnemix init` first")]
     StoreNotInitialized { path: PathBuf },
 
-    #[error("`mnemix vectors backfill --apply` is not supported yet because the shipped CLI does not expose an embedding provider")]
+    #[error(
+        "`mnemix vectors backfill --apply` is not supported yet because the shipped CLI does not expose an embedding provider"
+    )]
     VectorBackfillApplyUnsupported,
 
     #[error("`mnemix ui` does not support `--json`")]
