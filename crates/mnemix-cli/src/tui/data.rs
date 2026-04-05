@@ -338,7 +338,7 @@ impl BrowserData {
     }
 }
 
-/// The TUI uses LanceDB directly here so it can render search provenance from
+/// The TUI uses `LanceDB` directly here so it can render search provenance from
 /// `search_matches`; if another backend needs TUI support, this is the seam to
 /// generalize.
 pub(crate) fn search_entries(
