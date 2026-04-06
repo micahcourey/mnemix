@@ -36,8 +36,9 @@ struct PolicyStateFile {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 struct PolicyStateEntry {
-    #[serde(default)]
     evidence: PolicyEvidence,
+    #[serde(default)]
+    evidence_ttl: Option<EvidenceTtl>,
     #[serde(default)]
     created_at_unix: Option<u64>,
     #[serde(default)]
@@ -63,6 +64,7 @@ impl From<PolicyStateEntryCompat> for PolicyStateEntry {
             PolicyStateEntryCompat::Current(entry) => entry,
             PolicyStateEntryCompat::Legacy(evidence) => Self {
                 evidence,
+                evidence_ttl: None,
                 created_at_unix: None,
                 updated_at_unix: None,
             },
@@ -89,6 +91,10 @@ impl PolicyStateEntry {
 
     fn last_updated_unix(&self) -> Option<u64> {
         self.updated_at_unix.or(self.created_at_unix)
+    }
+
+    fn effective_ttl(&self, default_ttl: EvidenceTtl) -> EvidenceTtl {
+        self.evidence_ttl.unwrap_or(default_ttl)
     }
 }
 
@@ -133,12 +139,16 @@ fn check(
 
 fn record(store_path: &Path, args: &PolicyRecordArgs) -> Result<CommandOutput, CliError> {
     fs::create_dir_all(store_path)?;
+    let config = load_policy_config(store_path)?;
     let mut state = load_policy_state(store_path)?;
     let now_unix = current_unix_timestamp();
     let entry = state
         .workflows
         .entry(args.workflow_key.clone())
         .or_default();
+    if entry.evidence_ttl.is_none() {
+        entry.evidence_ttl = Some(config.defaults.evidence_ttl);
+    }
 
     match args.action {
         PolicyAction::SkipReason => {
@@ -189,34 +199,59 @@ fn clear(store_path: &Path, args: &PolicyClearArgs) -> Result<CommandOutput, Cli
         ));
     };
 
-    let message = if let Some(action) = args.action {
-        clear_action(&mut entry.evidence, action);
-        if entry.is_empty() {
-            format!(
-                "Cleared `{}` and removed now-empty workflow `{}`",
-                action.as_str(),
-                args.workflow_key
+    let (status, message, state_changed) = if let Some(action) = args.action {
+        let changed = clear_action(&mut entry.evidence, action);
+        if !changed {
+            state.workflows.insert(args.workflow_key.clone(), entry);
+            (
+                "unchanged",
+                format!(
+                    "No `{}` evidence was present for workflow `{}`",
+                    action.as_str(),
+                    args.workflow_key
+                ),
+                false,
+            )
+        } else if entry.is_empty() {
+            (
+                "cleared",
+                format!(
+                    "Cleared `{}` and removed now-empty workflow `{}`",
+                    action.as_str(),
+                    args.workflow_key
+                ),
+                true,
             )
         } else {
             entry.touch(current_unix_timestamp());
             state.workflows.insert(args.workflow_key.clone(), entry);
-            format!(
-                "Cleared `{}` for workflow `{}`",
-                action.as_str(),
-                args.workflow_key
+            (
+                "cleared",
+                format!(
+                    "Cleared `{}` for workflow `{}`",
+                    action.as_str(),
+                    args.workflow_key
+                ),
+                true,
             )
         }
     } else {
-        format!(
-            "Cleared all policy evidence for workflow `{}`",
-            args.workflow_key
+        (
+            "cleared",
+            format!(
+                "Cleared all policy evidence for workflow `{}`",
+                args.workflow_key
+            ),
+            true,
         )
     };
 
-    save_policy_state(store_path, &state)?;
+    if state_changed {
+        save_policy_state(store_path, &state)?;
+    }
     Ok(super::status_result(
         "policy",
-        "cleared",
+        status,
         message,
         Some(store_path.display().to_string()),
         None,
@@ -225,8 +260,8 @@ fn clear(store_path: &Path, args: &PolicyClearArgs) -> Result<CommandOutput, Cli
 
 fn cleanup(store_path: &Path, args: &PolicyCleanupArgs) -> Result<CommandOutput, CliError> {
     let config = load_policy_config(store_path)?;
-    let ttl = args.ttl.unwrap_or(config.defaults.evidence_ttl);
-    let older_than = cleanup_window(ttl, args.older_than.as_deref())?;
+    let selected_ttl = args.ttl;
+    let older_than = cleanup_window(args.older_than.as_deref())?;
     let now_unix = current_unix_timestamp();
 
     let mut state = load_policy_state(store_path)?;
@@ -235,7 +270,12 @@ fn cleanup(store_path: &Path, args: &PolicyCleanupArgs) -> Result<CommandOutput,
         if entry.is_empty() {
             return false;
         }
-        !is_expired(entry, ttl, older_than, now_unix)
+        let ttl = entry.effective_ttl(config.defaults.evidence_ttl);
+        if selected_ttl.is_some_and(|filter| ttl != filter) {
+            return true;
+        }
+        let age_threshold = older_than.or_else(|| ttl_max_age(ttl));
+        !is_expired(entry, ttl, age_threshold, now_unix)
     });
     let removed = before.saturating_sub(state.workflows.len());
 
@@ -244,15 +284,7 @@ fn cleanup(store_path: &Path, args: &PolicyCleanupArgs) -> Result<CommandOutput,
         save_policy_state(store_path, &state)?;
     }
 
-    let lifecycle = if let Some(window) = older_than {
-        format!(
-            "using `{}` TTL and `{}` age threshold",
-            ttl.as_str(),
-            humantime::format_duration(window)
-        )
-    } else {
-        format!("using `{}` TTL with empty-entry cleanup only", ttl.as_str())
-    };
+    let lifecycle = cleanup_description(selected_ttl, older_than);
 
     Ok(super::status_result(
         "policy",
@@ -354,17 +386,20 @@ fn policy_state_path(store_path: &Path) -> PathBuf {
     store_path.join(POLICY_STATE_FILENAME)
 }
 
-fn clear_action(evidence: &mut PolicyEvidence, action: PolicyAction) {
-    evidence.actions.remove(&action);
+fn clear_action(evidence: &mut PolicyEvidence, action: PolicyAction) -> bool {
+    let removed_action = evidence.actions.remove(&action);
     if matches!(action, PolicyAction::SkipReason) {
-        evidence.skip_reason = None;
+        let removed_reason = evidence.skip_reason.take().is_some();
+        return removed_action || removed_reason;
     }
+    removed_action
 }
 
 fn resolve_evidence(
     entry: &PolicyStateEntry,
-    ttl: EvidenceTtl,
+    default_ttl: EvidenceTtl,
 ) -> (Option<PolicyEvidence>, Option<String>) {
+    let ttl = entry.effective_ttl(default_ttl);
     if is_expired(entry, ttl, ttl_max_age(ttl), current_unix_timestamp()) {
         return (
             None,
@@ -378,15 +413,31 @@ fn resolve_evidence(
     (Some(entry.evidence.clone()), None)
 }
 
-fn cleanup_window(
-    ttl: EvidenceTtl,
-    older_than: Option<&str>,
-) -> Result<Option<Duration>, CliError> {
+fn cleanup_window(older_than: Option<&str>) -> Result<Option<Duration>, CliError> {
     match older_than {
         Some(value) => parse_duration(value)
             .map(Some)
             .map_err(|error| CliError::PolicyStateParse(error.to_string())),
-        None => Ok(ttl_max_age(ttl)),
+        None => Ok(None),
+    }
+}
+
+fn cleanup_description(selected_ttl: Option<EvidenceTtl>, older_than: Option<Duration>) -> String {
+    match (selected_ttl, older_than) {
+        (Some(ttl), Some(window)) => format!(
+            "for stored `{}` entries and `{}` age threshold",
+            ttl.as_str(),
+            humantime::format_duration(window)
+        ),
+        (Some(ttl), None) => format!(
+            "for stored `{}` entries using their default age threshold",
+            ttl.as_str()
+        ),
+        (None, Some(window)) => format!(
+            "using stored TTL semantics and `{}` age threshold",
+            humantime::format_duration(window)
+        ),
+        (None, None) => "using stored TTL semantics and default age thresholds".to_owned(),
     }
 }
 
