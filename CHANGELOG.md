@@ -6,6 +6,19 @@ The format is inspired by Keep a Changelog and semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-13
+
+### Added
+
+- **Optional LanceDB vector retrieval** — added lexical, semantic, and hybrid retrieval contracts; vector status, enablement, and backfill workflows; embedding provider plumbing; semantic candidate retrieval; and fixed-size embedding storage groundwork for Lance-backed stores.
+- **Vector-aware CLI and TUI workflows** — added embedding provider profile management, provider-backed `search` / `recall`, and retrieval provenance throughout the terminal UI so operators can inspect lexical, semantic, and hybrid matches from the same memory-browser experience.
+- **Completed policy runner lifecycle** — added `policy clear` and `policy cleanup`, TTL-aware policy-state handling, automatic workflow evidence recording through the coding-agent adapter, and example enforcement flows for wrappers, local hooks, and CI / PR gates.
+
+### Changed
+
+- **Docs site and guides** — expanded the docs site with a dedicated `mnemix-workflow` guide, vector retrieval guidance, richer CLI coverage, and updated host-adapter and policy-runner documentation.
+- **Website ecosystem messaging** — refreshed the public website ecosystem section and navigation so `mnemix-workflow` and the interactive UI sit more clearly alongside the rest of the Mnemix ecosystem.
+
 ## [0.3.0] - 2026-03-31
 
 ### Added
